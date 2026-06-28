@@ -168,3 +168,129 @@ _BattleStack_ +0xC4 = creature.speed
 ## 十三、修改的笔记文件
 
 - `D:\GitHub\H3\H3Note\战斗AI价值评估逆向笔记.md`
+
+## 十四、战场伤害/价值评估中的攻防加成（已确认）
+
+> 目标：确认“每支部队的总战斗价值是否会受到英雄/生物攻防加成”。本节只记录反汇编已经看到的字段与公式，不把未追完的函数命名为最终 AI 目标分数。
+
+### 1. `_BattleStack_` 构造时复制基础生物表字段
+
+`0x43D450` 构造/初始化 `_BattleStack_` 时，会从全局生物表复制整条 `_CreatureInfo_` 到 `stack + 0x74`：
+
+```asm
+0x0043d463  mov dword [ebx + 0x34], eax      ; creature_id
+0x0043d466  mov dword [ebx + 0x4c], ecx      ; count_current
+0x0043d477  mov ecx, dword [0x6747b0]        ; creature table
+0x0043d47f  lea edi, [ebx + 0x74]            ; stack.creature
+0x0043d488  lea esi, [edx + ecx]
+0x0043d48b  mov ecx, 0x1d                    ; 29 dwords = 0x74 bytes
+0x0043d490  rep movsd                        ; copy _CreatureInfo_
+```
+
+因此 `stack + 0xB0` 确认为 `stack.creature.fight_value`，但这里是整条生物信息复制，不是 AI 评分公式。
+
+### 2. 攻防修正字段的位置
+
+`0x4E6390` 会把英雄/特长/状态等加成写入 `_BattleStack_` 的攻击、防御、伤害等派生字段，确认写点：
+
+```asm
+0x004e63bd  mov edx, dword [esi + 0x54]
+0x004e63c0  add edx, eax
+0x004e63c2  mov dword [esi + 0x54], edx      ; 攻击加成累加
+0x004e63e1  mov ecx, dword [esi + 0x58]
+0x004e63e4  add ecx, eax
+0x004e63e6  mov dword [esi + 0x58], ecx      ; 防御加成累加
+...
+0x004e648d  mov edx, dword [esi + 0x54]
+0x004e6498  mov dword [esi + 0x54], edx
+0x004e649b  mov edx, dword [edi + 0xc]
+0x004e64a0  mov dword [esi + 0x58], eax
+0x004e64a8  mov eax, dword [esi + 0x60]
+0x004e64b3  mov dword [esi + 0x60], eax
+```
+
+结合 `deps\homm3.h` 中 `_BattleStack_` 字段布局：
+
+```text
+stack +0xC8 = creature.attack     ; 生物基础攻击
+stack +0xCC = creature.defence    ; 生物基础防御
+stack +0xD0 = creature.damage_min
+stack +0xD4 = creature.damage_max
+
+stack +0x54 / +0x58 / +0x5C / +0x60 是战斗中用于派生攻防/伤害的字段；0x4E6390 会累加英雄/特长/状态带来的修正。
+```
+
+### 3. 伤害估算函数会读取派生攻防字段
+
+`0x443C60` 是 `_BattleStack_::Calc_Damage_Bonuses` 包装入口；它先调用 `0x443560`，后续再乘其它倍率。`0x443560` 先调用 `0x443040` 得到基础伤害估计。
+
+`0x443040` 中确认会调用：
+
+```asm
+0x004430b5  mov ecx, dword [ebp + 0xc]
+0x004430b8  push ecx
+0x004430b9  push edi
+0x004430ba  mov ecx, ebx
+0x004430bc  call 0x442130                  ; 取攻击方攻击值
+0x004430c1  push 1
+0x004430c3  push ebx
+0x004430c4  mov ecx, edi
+0x004430c8  call 0x4422b0                  ; 取防御方防御值
+0x004430cd  cmp esi, eax
+0x004430d1  sub esi, eax                   ; 攻防差
+```
+
+`0x442130` 以攻击方 stack 为 `ecx`，直接读取：
+
+```asm
+0x0044213d  mov ebx, dword [esi + 0xc8]    ; 基础 attack
+...
+0x00442148  mov eax, dword [esi + 0x248]
+0x00442152  mov eax, dword [esi + 0x468]
+0x0044216a  add ebx, eax                   ; 状态修正
+```
+
+`0x4422B0` 以防御方 stack 为 `ecx`，直接读取：
+
+```asm
+0x004422d2  mov ebx, dword [edi + 0xcc]    ; 基础 defence
+...
+0x004422e8  fild dword [ebp + 0xc]
+0x004422f1  fmul dword [0x63b8b0]
+0x00442307  fmul dword [0x63b8ac]
+```
+
+`0x443040` 中的攻防差参与伤害估算：
+
+```asm
+0x004430d1  sub esi, eax                   ; attack_total - defence_total
+0x004430dc  fld qword [ebp - 0x1c]
+0x004430df  fmul qword [0x63ac58]          ; 常量 0.05
+0x00443106  fild dword [ebp + 8]           ; base damage
+0x0044310f  fmul qword [ebp - 0x1c]
+0x00443118  fadd qword [ebp - 0x2c]
+0x0044311b  call 0x617f94                  ; round
+```
+
+已确认的核心公式形态：
+
+```c
+attack_total = attacker.creature.attack + attacker战斗修正;
+defence_total = defender.creature.defence + defender战斗修正;
+diff = attack_total - defence_total;
+
+if (diff > 0) {
+    // 反汇编确认正向分支按 0.05 * diff 增伤，并有上限钳制到 3.0 倍附近
+    damage = round(base_damage + base_damage * min(diff * 0.05, 3.0));
+}
+```
+
+注意：本节确认的是**伤害估算/伤害加成算法读了战斗中的总攻防**。这可以解释“AI 对一支部队的价值/威胁评估会间接受英雄攻防影响”的路径：AI 如果用 `0x443C60/0x443560/0x443040` 估算打击收益，则已包含攻防修正。
+
+### 4. 当前仍未确认的点
+
+- 还没有确认“战场目标选择最终 score 直接读取 `fight_value(+0x3C)`”。
+- 已确认的 `_BattleStack_ +0xB0` 读点中，`0x41A8AA`、`0x407937`、`0x457790` 分别属于显示/对象释放/资源显示链路，不是目标选择评分。
+- `0x477940` 在战场 AI 行动链路中按数量累加全局生物表 `+0x38` 字段，不是 `fight_value(+0x3C)`。
+- `0x469F30` 在战场威胁评估中读取全局生物表 `+0x4C`（hit_points），并乘以数量/差值，不是 `fight_value(+0x3C)`。
+

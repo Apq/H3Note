@@ -128,3 +128,62 @@ lea eax, [creature_id + edx*4]; eax = creature_id + creature_id*28 = creature_id
 | 0x476F5D | +0x4C | hit_points |
 
 **战场代码段中没有找到直接访问生物表 fight_value(+0x3C) 的证据。**
+
+## 补充：总战斗价值与英雄攻防加成的已确认链路
+
+### 1. `fight_value(+0x3C)` 不是目前已确认的目标选择直接字段
+
+继续搜索 `_BattleStack_ +0xB0` 和全局生物表 `+0x3C` 后，当前确认结果是：
+
+- 未在战场目标选择主链中确认直接读取 `fight_value(+0x3C)`。
+- 已命中的 `_BattleStack_ +0xB0` 读点（如 `0x41A8AA`、`0x407937`、`0x457790`）属于显示/析构/资源相关上下文，不是目标评分。
+- `0x477940` 位于战场 AI 行动链路附近，但它累加的是生物表 `+0x38 * count`，不是 `+0x3C`。
+- `0x469F30` 的威胁评估读取的是生物表 `+0x4C`（hit_points），不是 `fight_value`。
+
+### 2. 确认存在“受英雄/状态攻防影响”的伤害估算链
+
+虽然尚未确认 `fight_value` 参与最终目标排序，但已确认战场伤害估算会读取战斗中的总攻击/总防御：
+
+```text
+0x443C60  Calc_Damage_Bonuses 包装入口
+  -> 0x443560
+    -> 0x443040  基础伤害估算
+      -> 0x442130  取攻击方 attack_total
+      -> 0x4422B0  取防御方 defence_total
+```
+
+关键指令：
+
+```asm
+0x0044213d  mov ebx, dword [esi + 0xc8]    ; attacker 基础 attack
+0x004422d2  mov ebx, dword [edi + 0xcc]    ; defender 基础 defence
+0x004430d1  sub esi, eax                   ; attack_total - defence_total
+0x004430df  fmul qword [0x63ac58]          ; 0.05
+0x0044310f  fmul qword [ebp - 0x1c]        ; base_damage * multiplier
+```
+
+`0x4E6390` 会把英雄/特长/状态等加成累入 stack 的派生攻防/伤害字段：
+
+```asm
+0x004e63bd  mov edx, dword [esi + 0x54]
+0x004e63c0  add edx, eax
+0x004e63c2  mov dword [esi + 0x54], edx
+0x004e63e1  mov ecx, dword [esi + 0x58]
+0x004e63e4  add ecx, eax
+0x004e63e6  mov dword [esi + 0x58], ecx
+```
+
+因此可确认的算法形态是：
+
+```c
+attack_total  = attacker.creature.attack  + 战斗中攻击修正;
+defence_total = defender.creature.defence + 战斗中防御修正;
+diff = attack_total - defence_total;
+
+if (diff > 0) {
+    damage = round(base_damage + base_damage * min(diff * 0.05, 3.0));
+}
+```
+
+这说明：如果 AI 目标评估使用这条伤害估算链，那么评估结果会受英雄/状态攻防影响。这里不要写成“fight_value 本身被英雄攻防修正”；目前确认的是**伤害估算链受攻防修正影响**。
+
