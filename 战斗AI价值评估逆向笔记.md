@@ -294,3 +294,77 @@ if (diff > 0) {
 - `0x477940` 在战场 AI 行动链路中按数量累加全局生物表 `+0x38` 字段，不是 `fight_value(+0x3C)`。
 - `0x469F30` 在战场威胁评估中读取全局生物表 `+0x4C`（hit_points），并乘以数量/差值，不是 `fight_value(+0x3C)`。
 
+## 十五、候选收益值的数据类型与排序方式（阶段性确认）
+
+### 1. score 的存储类型
+
+`0x469C50` 中每个候选条目是 **8 字节结构**：
+
+```text
+[offset +0x00] DWORD  目标/槽位标识（或目标指针/索引）
+[offset +0x04] DWORD  目标关联数据（第二个字段）
+```
+
+在插入时，函数反复执行：
+
+```asm
+mov eax, [ebp - 0x1c]
+mov edx, [ebp - 0x18]
+mov [edi], eax
+mov [edi + 4], edx
+```
+
+这说明候选信息不是单纯的 `int score` 数组，而是**两个 DWORD 组成的条目**。当前能确认的是：它们以 8 字节为单位搬移、插入、压缩。
+
+> 注意：目前还没有在这段里直接读出“哪个 DWORD 就是收益分数”，因此不要把这两个 DWORD 直接等同为 score+target；这里只能确认它们是容器条目字段。
+
+### 2. 结果排序不是“遍历找最大”，而是有序插入
+
+`0x469C50` 的后半段没有看到完整的“扫描完再 `if (score > best)`”模式，而是：
+
+- 通过 `call 0x617492` 扩容；
+- 通过 `call 0x4af570` / `0x522af0` 进行区间搬移；
+- 通过 `call 0x4af240`、`call 0x46ad50` 维护容器边界；
+- 通过 `cmp edi, eax` / `cmp eax, edi` / `sar ecx, 3` 这些位置关系判断插入点。
+
+因此目前更稳妥的结论是：
+
+```text
+候选不是“最后再找最大值”，而是在生成过程中就保持某种有序状态；
+最终从排序后的首项/优先项取目标。
+```
+
+### 3. 收益值的具体数值类型
+
+已确认：
+
+- 伤害估算函数 `0x443040` / `0x443560` / `0x443C60` 的中间结果经过 `call 0x617f94`，返回值是 **int**（四舍五入后的整数伤害）。
+- `0x469F30` 的威胁评估中，最终 `call 0x617f94` 之后把结果写回 `[ecx]`，也是 **int**。
+
+未确认：
+
+- `0x469C50` 自身的候选条目第二个 DWORD 是否就是 score；
+- 容器内部比较函数到底比较的是 int、符号位拼接值，还是别的打包格式。
+
+### 4. 当前可写成的阶段性伪代码
+
+```c
+// 0x469C50：对每个候选槽位生成/更新条目并插入有序容器
+for each candidate_slot:
+    if slot invalid: continue
+    if !passes_filter(candidate): continue
+
+    entry = { field0, field1 }   // 8-byte item
+    insert_into_sorted_container(entry)
+
+// 最终选择：从容器前端/优先项取一个目标
+best = container.first()
+attack(best)
+```
+
+### 5. 目前不能写死的结论
+
+- 不能写成“score = float”；证据显示中间和最终结果都被 `round` 成 int。
+- 不能写成“best by max loop”——当前看到的是插入排序/容器有序维护。
+- 不能写死 `field0/field1` 哪个是 score，哪个是目标标识；需要再看 `0x4afa00`、`0x617492`、`0x46ad50` 或容器内部比较逻辑。
+
