@@ -474,3 +474,81 @@ score = Σ(各部队数量变化 × 该部队单只 HP) + 固定修正
 该公式使用的是 `hit_points(+0x4C)`，不是 `fight_value(+0x3C)`。
 
 截至当前证据，`fight_value` 未出现在这条 score 主链中。
+
+## 十四、全局生物表 +0x38 = cost.gold（已确认）
+
+### 1. 字段确认
+
+`_CreatureInfo_` 结构布局：
+
+```text
++0x00  town
++0x04  level
++0x08  sound_name (ptr)
++0x0C  def_name (ptr)
++0x10  flags
++0x14  name_single (ptr)
++0x18  name_plural (ptr)
++0x1C  specification_description (ptr)
++0x20  cost.wood
++0x24  cost.mercury
++0x28  cost.ore
++0x2C  cost.sulfur
++0x30  cost.crystal
++0x34  cost.jems
++0x38  cost.gold       ← 这就是 +0x38
++0x3C  fight_value
++0x40  AI_value
++0x4C  hit_points
+```
+
+### 2. 0x476DA0 主链对全局生物表的完整读取
+
+在 `0x476DA0` 完整反汇编中，对全局生物表（`0x6747B0`）的读取只有：
+
+1. **`+0x4C` (hit_points)**：用于 HP 累加和上限
+2. **`+0x38` (cost.gold)**：用于 `0x476F3A` 循环中的金币价值累加
+
+**没有读取 `+0x3C` (fight_value)。**
+
+### 3. 0x476F3A 循环的完整逻辑
+
+```asm
+0x00476f3a  mov eax, dword [ebx]                  ; creature_id
+0x00476f3c  cmp eax, 0xffffffff                   ; 无效跳过
+0x00476f41  mov edi, dword [ebx + 0x2c]           ; count_after
+0x00476f44  mov edx, dword [ebx + 0x18]           ; count_before
+0x00476f47  sub edi, edx                          ; delta = after - before
+0x00476f5d  mov edx, dword [0x6747b0]             ; creature table
+0x00476f63  mov eax, dword [edx + eax*4 + 0x4c]   ; hit_points
+0x00476f67  cmp eax, ecx                          ; cap at max
+0x00476f6d  imul eax, edi                         ; hp * delta
+0x00476f93  mov ecx, dword [esi + 0x13d4c]        ; 累加到 0x13D4C
+0x00476f99  add ecx, eax
+0x00476f9b  mov dword [esi + 0x13d4c], ecx
+```
+
+等等——仔细重读，这里 `+0x4C` 是 hit_points，不是 `+0x38`！
+
+`+0x38` 的读取出现在 `0x477330` 函数和 `0x477810` 函数中，这两个函数的 caller 不在 `0x476DA0` 主链里，而在冒险地图评估链里。
+
+### 4. 结论修正
+
+重新确认：`0x476DA0` 战场 AI 主链**只读取全局生物表的 `+0x4C` (hit_points)**。
+
+`+0x38` (cost.gold) 的读取出现在 `0x477330 / 0x477810`，这些函数被 `0x41E6F0` 等冒险地图函数调用，不是战场 AI。
+
+### 5. 圣龙 vs 大天使反例的当前分析
+
+如果战场 AI 只用 `hit_points * count_delta` 评估：
+- 圣龙 HP = 300（假设），打掉 1 个 = 300 HP 变化
+- 大天使 HP = 250（假设），打掉部分大天使
+
+但实际行为是优先打圣龙。可能的原因：
+
+1. `0x469F30` 评估的是"整体行动收益"，不是"选哪个目标"——目标选择可能在另一层
+2. 可能存在我还没找到的目标选择函数，它确实用了 fight_value 或其它字段
+3. 200% 难度可能有额外修正（难度系数/attacker bonus）
+
+当前诚实结论：**仅凭已确认的反汇编证据，还不能完全解释圣龙/大天使反例。需要继续深挖目标选择层。**
+
