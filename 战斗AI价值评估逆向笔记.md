@@ -40,6 +40,9 @@ _CreatureInfo_ +0x4C = hit_points
 _CreatureInfo_ +0x50 = speed
 ```
 
+> 口径修正：`_CreatureInfo_ +0x40 = AI_value` 暂按冒险地图/外部 AI 价值处理；本文后续只关注 **200% 难度下战场 AI**。除非有明确战场调用证据，否则不把 `AI_value(+0x40)` 写入战场目标选择公式。
+
+
 `_BattleStack_` 内嵌 `_CreatureInfo_` 起点是 `+0x74`，因此从 stack 指针看：
 
 ```text
@@ -364,7 +367,7 @@ threat_value = round_to_int((threat_value / 2) * multiplier_from_0x4E47F0);
 
 if (threat_value >= threshold_from_ai_table) {
     ai_state = 5;
-    ai_value = threat_value;
+    selected_value = threat_value;
 }
 ```
 
@@ -471,4 +474,3 @@ score = Σ(各部队数量变化 × 该部队单只 HP) + 固定修正
 该公式使用的是 `hit_points(+0x4C)`，不是 `fight_value(+0x3C)`。
 
 截至当前证据，`fight_value` 未出现在这条 score 主链中。
-
