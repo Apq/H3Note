@@ -380,3 +380,95 @@ if (threat_value >= threshold_from_ai_table) {
 ### 5. 与 fight_value 的关系
 
 该新增威胁分支使用的是生物表 `+0x38`，不是 `fight_value(+0x3C)`。截至当前证据，仍不能写成 fight_value 直接参与该公式。
+
+## 十三、0x469F30 完整公式（最终确认）
+
+### 1. AI 评估数组的条目布局
+
+`0x476DA0` 维护一个 AI 侧的评估数组，起点为 `this + 0x5500`，每条目步进 `0x548`（1352 字节）。
+
+已确认字段：
+
+```text
+entry +0x00  creature_id / 槽位标识（0xFFFFFFFF = 无效）
+entry +0x18  count_before（攻击/动作前数量）
+entry +0x2C  count_after（攻击/动作后数量）
+entry +0x50  flags / 状态位
+```
+
+### 2. 0x469F30 的完整公式
+
+```asm
+0x00469f64  mov esi, dword [eax - 0x50]      ; creature_id
+0x00469f67  cmp esi, 0xffffffff              ; 无效则跳过
+0x00469f6c  mov edi, dword [eax]             ; flags
+0x00469f70  shr ecx, 0x16                    ; 检查 bit 22
+0x00469f7a  shr ecx, 6                       ; 检查 bit 6
+0x00469f82  mov ecx, dword [eax - 0x24]      ; count_after
+0x00469f85  mov edi, dword [eax - 0x38]      ; count_before
+0x00469f88  sub ecx, edi                     ; delta = count_after - count_before
+0x00469f9c  imul ecx, dword [edi + esi*4 + 0x4c]  ; delta * hit_points
+0x00469fa1  add ebx, ecx                     ; total += delta * hp
+```
+
+完整伪代码：
+
+```c
+int total = 0;
+
+for (int i = 0; i < 20; i++) {
+    entry = &ai_array[i];  // step 0x548
+
+    creature_id = entry.creature_id;     // +0x00
+    if (creature_id == -1) continue;
+
+    flags = entry.flags;                 // +0x50
+    if (flags & (1 << 22)) continue;     // 已死亡/已移除
+    if (flags & (1 << 6))  continue;     // 其他排除条件
+
+    count_before = entry.count_before;   // +0x18
+    count_after  = entry.count_after;    // +0x2C
+    delta = count_after - count_before;
+
+    hp = creature_table[creature_id].hit_points;  // +0x4C
+    total += delta * hp;
+}
+
+// 固定修正
+if (this.side_data[side] != 0) total += 500;
+if (some_global_flag)           total -= 500;
+if (other_conditions)           total += 500;
+
+// 倍率
+if (attacker_context != 0) {
+    float mult = call_0x4E4AB0(attacker_context);
+    total = round_to_int(total * mult);
+}
+
+// 写回结果
+*output = total;
+```
+
+### 3. 公式含义
+
+`delta = count_after - count_before` 表示**某个动作后该部队的数量变化**：
+
+- 若 delta > 0：数量增加（复活/增援），正贡献。
+- 若 delta < 0：数量减少（伤亡），负贡献。
+
+乘以 `hit_points` 后，得到的是**以 HP 为单位的兵力变化量**。
+
+因此 `0x469F30` 的评估值本质是：
+
+```text
+score = Σ(各部队数量变化 × 该部队单只 HP) + 固定修正
+```
+
+若存在攻击者上下文，再乘以 `0x4E4AB0` 返回的状态倍率。
+
+### 4. 与 fight_value 的关系
+
+该公式使用的是 `hit_points(+0x4C)`，不是 `fight_value(+0x3C)`。
+
+截至当前证据，`fight_value` 未出现在这条 score 主链中。
+
