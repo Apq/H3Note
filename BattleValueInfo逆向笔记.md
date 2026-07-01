@@ -419,3 +419,439 @@ BUILD: 正常描述控件兜底调整 ... old=(72,232,140,41) target=(20,254,200
 - 窗口 Y 吸附必须按 HD 启动器分辨率高度计算，不能用 `o_ScreenHeight`。
 - BUILD 阶段只保留正常高度控件（如 `h=41`）兜底调整；扩展高度描述控件只记录，不再改字段。
 
+
+## 13. 战场显示区域与重绘边界（确认）
+
+### 13.1 全局重绘边界地址
+
+`homm3.h` 已定义：
+
+```cpp
+#define BattleRedraw_Borders (*(_RedrawBorders_*)0x694F68)
+```
+
+`_RedrawBorders_` 字段语义：
+
+```cpp
+struct _RedrawBorders_ {
+    int Left;
+    int High;
+    int Right;
+    int Low;
+};
+```
+
+该结构用于战斗场景的重绘裁剪边界。字段含义由 `homm3.h` 中 `_BattleMgr_` 的边界计算逻辑确认：
+
+```cpp
+Brd.Left  = max(X_Pos, BattleRedraw_Borders.Left);
+Brd.High  = max(Y_Pos, BattleRedraw_Borders.High);
+Brd.Right = min(X_Pos + Width - 1, BattleRedraw_Borders.Right);
+Brd.Low   = min(Y_Pos + Height - 1, BattleRedraw_Borders.Low);
+```
+
+因此 `BattleRedraw_Borders.Left/Right/High/Low` 可作为战场实际渲染/重绘范围的当前全局边界。
+
+### 13.2 `_BattleMgr_::dlg` 偏移
+
+`_BattleMgr_` 中确认：
+
+```cpp
+_Dlg_* dlg; // +0x132FC
+```
+
+`GetHexIxAtXY` 也确认战场坐标会扣除 `dlg->x / dlg->y`：
+
+```cpp
+inline int GetHexIxAtXY(int x, int y) {
+    return CALL_2(int, __stdcall, 0x464380, x - dlg->x, y - dlg->y);
+}
+```
+
+这说明 `_BattleMgr_::dlg` 是战斗窗口/战场坐标换算的基准窗口。若全局重绘边界异常，可用 `dlg->x + dlg->width / 2` 作为战场中心的回退值。
+
+### 13.3 `0x493FC0` 战场重绘函数中的确认点
+
+`_BattleMgr_::RedrawBattlefield` 调用地址：
+
+```cpp
+CALL_7(void, __thiscall, 0x493FC0, this, Flip, SetBattleRedraws, UseBattleRedraws,
+       WaitingTime, RedrawBackground, Wait);
+```
+
+反汇编 `0x493FC0` 可确认：
+
+```asm
+0x00493fc7  mov esi, ecx                         ; esi = BattleMgr*
+0x00494043  mov ecx, dword [esi + 0x132fc]       ; ecx = mgr->dlg
+```
+
+在完整背景重绘分支中可见原版战场背景尺寸常量：
+
+```asm
+0x004940da  push 0x22c    ; 556
+0x004940df  push 0x320    ; 800
+0x004940e8  call 0x44df80 ; DrawSurface16
+```
+
+即原版战斗背景绘制面以 `800 × 556` 为基础尺寸。
+
+在局部重绘分支中，函数读取 `_BattleMgr_` 的局部边界字段并计算宽高：
+
+```asm
+0x004940f4  mov ecx, dword [esi + 0x13d3c]
+0x004940fa  mov edx, dword [esi + 0x13d38]
+0x00494119  mov eax, dword [esi + 0x13d44]
+0x00494121  sub eax, edi
+0x00494123  inc eax
+0x00494125  mov eax, dword [esi + 0x13d40]
+0x0049412b  sub eax, ebx
+0x0049412d  inc eax
+```
+
+这些字段参与 `DrawSurface16(0x44DF80)` 的局部矩形拷贝，属于战场局部重绘矩形链路。
+
+### 13.4 插件面板定位的可靠依据
+
+用于把战场顶部远程力量面板吸附到战场范围上方中心时，优先顺序应为：
+
+1. 使用 `BattleRedraw_Borders.Left/Right` 的中点作为战场显示区域中心 X。
+2. 使用 `BattleRedraw_Borders.High` 作为战场显示区域顶部 Y。
+3. 若边界值异常，再回退到 `_BattleMgr_::dlg`：
+
+```cpp
+center_x = dlg->x + dlg->width / 2;
+y        = dlg->y + configured_offset;
+```
+
+当前确认范围仅限：
+
+- `BattleRedraw_Borders` 是战场重绘裁剪边界；
+- `_BattleMgr_::dlg` 是战场坐标换算基准窗口；
+- `0x493FC0` 使用 `mgr->dlg` 与 `800×556` 原版背景尺寸进行战场绘制。
+
+尚未写入固定运行时坐标值；具体 HD 分辨率下的 `screen/dlg/borders` 数值需以运行日志为准。
+
+## 14. HD ReplayableQB 结果窗口“取消”按钮来源（确认）
+
+本节记录 2026-07-01 对 HD Mod 结果窗口附加按钮的反汇编确认信息。
+
+### 14.1 结论
+
+快速战斗结果窗口上的“取消”按钮不是 BattleValueInfo 插件添加的，也不是原版 `CPResult` 构造函数直接创建的。
+
+已确认来源为 HD Mod 的 `HD_SOD.dll` 中 Replayable Quick Battle 相关逻辑。
+
+核心开关/字符串：
+
+| 项 | 确认值 |
+|----|--------|
+| 功能开关 | `HD+.ReplayableQB` |
+| 语言/文本键 | `ApplyQBattleResult` |
+| 相关配置/功能键 | `HD.QuickCombat` |
+| 按钮资源 | `iCANCEL.def` |
+| 按钮 ID | `0x1FB` / `507` |
+
+### 14.2 `HD_SOD.dll` 字符串位置
+
+目标文件：
+
+```text
+D:\Heroes3\Heroes3_2026.05.01\HD_SOD.dll
+```
+
+PE 信息：
+
+```text
+ImageBase = 0x01000000
+.text paddr = 0x00000400, vaddr = 0x01001000
+.rdata paddr = 0x00129200, vaddr = 0x0112A000
+```
+
+已确认字符串：
+
+| 字符串 | VA | 说明 |
+|--------|----|------|
+| `ApplyQBattleResult` | `0x0114309C` / `0x011430B0` / `0x011430C4` | 快速战斗结果应用文本键 |
+| `box64x30.pcx` | `0x011430D8` | 按钮/背景资源 |
+| `iCANCEL.def` | `0x011430E8` | 取消按钮 DEF 资源 |
+| `HD.QuickCombat` | `0x011430FC` | 快速战斗相关键 |
+| `HD+.ReplayableQB` | `0x0114766C` | 可重打快速战斗结果开关 |
+| `QuickFinishBattle` | `0x01145770` | 快速结束战斗文本键 |
+
+### 14.3 添加结果窗口按钮的函数
+
+已确认函数入口附近：
+
+```text
+HD_SOD.dll VA 0x010A6630
+文件偏移约 0x000A5A30
+```
+
+该函数开头附近会检查：
+
+```asm
+push 0x114766c              ; "HD+.ReplayableQB"
+call 0x10051a0              ; 读取 HD 配置/开关对象
+cmp dword [eax], 0
+```
+
+并在满足条件时处理 `ApplyQBattleResult` 文本和附加按钮。
+
+### 14.4 “取消”按钮创建点
+
+确定的按钮创建序列位于：
+
+```text
+HD_SOD.dll VA 0x010A6778 ~ 0x010A67E7
+```
+
+关键反汇编：
+
+```asm
+0x010A6778  push 2
+0x010A677A  push 1
+0x010A677C  push 1
+0x010A677E  push 1
+0x010A6780  push 0
+0x010A6782  push 0x11430e8        ; "iCANCEL.def"
+0x010A6787  push 0x1e61           ; hotkey/消息相关值
+0x010A678C  push 0
+0x010A678E  push 0
+0x010A6790  push 0x1fb            ; id = 507
+0x010A6795  push 0x15             ; y = 21
+0x010A6797  push 0x68             ; x = 104
+0x010A6799  mov eax, 0x617492
+0x010A679E  call eax              ; 分配/构造前置包装
+0x010A67A0  add esp, 4
+0x010A67A3  mov edx, 0x455BD0     ; 原版 _DlgButton_::Create
+0x010A67A8  mov ecx, eax
+0x010A67AA  call edx
+0x010A67AC  mov [ebp-4], eax      ; 保存按钮指针
+...
+0x010A67E0  mov eax, [ebp-4]
+0x010A67E3  push eax
+0x010A67E4  mov ecx, [ebp+0x0C]   ; 目标 dlg
+0x010A67E7  call 0x1055C70        ; 加入结果窗口 dlg
+```
+
+由此确认：
+
+- 该按钮是 HD 在结果窗口对象上动态追加的 `_DlgButton_`；
+- 使用原版 `_DlgButton_::Create`，地址 `0x455BD0`；
+- 资源名为 `iCANCEL.def`；
+- 控件 ID 为 `507`；
+- 该逻辑属于 `HD+.ReplayableQB` / 快速战斗结果可重打机制。
+
+### 14.5 相关按钮/文本创建
+
+同一函数还创建/处理 `ApplyQBattleResult` 文本与 `box64x30.pcx`：
+
+```asm
+0x010A66C9  push 0x114309c        ; "ApplyQBattleResult"
+0x010A66D0  push 0x11430b0        ; "ApplyQBattleResult"
+...
+0x010A6704  push 0x11430c4        ; "ApplyQBattleResult"
+...
+0x010A675C  push 0x11430d8        ; "box64x30.pcx"
+```
+
+这说明结果窗口中的“应用结果/取消重打”一组 UI 元素由同一段 HD_SOD.dll 逻辑创建。
+
+### 14.6 取消按钮事件处理线索
+
+同一附近存在后续处理函数，入口约：
+
+```text
+HD_SOD.dll VA 0x010A6800
+```
+
+该函数会读取事件/消息值，并对若干地址常量比较：
+
+```asm
+cmp [ebp-4], 0x477254
+cmp [ebp-4], 0x4772F4
+cmp [ebp-4], 0x4AD2F7
+cmp [ebp-4], 0x4AE121
+```
+
+其中当当前/焦点控件 ID 匹配 `0x1E61` 时，会写入：
+
+```asm
+mov dword [0x1151E68], 2
+mov dword [ecx], 0x477303
+```
+
+该段与取消/重打流程有关，但这里仅记录已反汇编确认的地址和值；具体状态机语义需后续单独验证。
+
+### 14.7 与原版 CPResult 的关系
+
+原版 `Heroes3.exe` 中 `CPResult.pcx` 引用位于 `CPResult` 构造流程：
+
+```text
+Heroes3.exe VA 0x0046FE20 附近
+CPResult.pcx 字符串 VA 0x00670188
+引用文件偏移 0x0006FEA0
+```
+
+扫描确认 `CPResult.pcx` 只在原版结果窗口构造中被引用；`HD_SOD.dll` 不直接引用该字符串，而是在运行时对已有结果窗口 dlg 追加 ReplayableQB 相关控件。
+
+因此后续若要观察或处理 HD 的取消按钮，应优先围绕：
+
+- HD_SOD.dll `0x010A6630` 附近的 ReplayableQB UI 创建函数；
+- 按钮 ID `0x1FB` / `507`；
+- 原版 `_DlgButton_::Create` (`0x455BD0`) 与 HD 加入 dlg 的调用点 `0x010A67E4`；
+- 事件处理入口约 `0x010A6800`。
+
+不要误判为 BattleValueInfo 插件自身添加，也不要只从原版 `CPResult.pcx` 构造函数中寻找该按钮。
+
+
+## SoD_SP SpellDetails 无目标魔法书详情（确认）
+
+- 环境：`D:\Heroes3\Heroes3_2026.05.01\_HD3_Data\Packs\SoD_SP插件19版\SoD_SP.dll`。
+- 配置项表中存在 `SpellDetails` 字符串，文件偏移 `0x59868`，运行 VA `0x1005AA68`。
+- 配置项表起始附近：`0x10059BB0`；其中 `SpellDetails` 表项在 `0x10059BF8`。
+- `SpellDetails` 对应运行时开关字节为 `0x10065673`。
+- 对 `0x10065673` 的直接引用共 3 处（文件偏移 / VA）：
+  - `0x9BDC` / `0x1000A7DC`，函数起点 `0x1000A7A0`。
+  - `0x9C8C` / `0x1000A88C`，函数起点 `0x1000A850`。
+  - `0xA241` / `0x1000AE41`，函数起点 `0x1000ADF0`。
+- SoD_SP hook 注册处确认：
+  - `0x1000A7A0` hook 原版地址 `0x004F55F8`。
+  - `0x1000A850` hook 原版地址 `0x00571709`。
+  - `0x1000ADF0` hook 原版地址 `0x005591B9`。
+- `0x1000ADF0` 不是魔法伤害算法；它是通用数值格式化/显示增强逻辑，确认看到格式串：
+  - `%d,%03d`
+  - `%d,%03d{k}`
+  - `%d{M}`
+  - `%d,%03d{M}`
+- `0x1000A7A0` 与 `0x1000A850` 会在 `SpellDetails` 开启时读取 UI/控件对象中已有的数值字段：
+  - `mov esi, [eax+8]` 或同类读取；
+  - 判断 `>= 1000` 后改写/追加控件文本；
+  - 这两处目前确认更像“把已有 value 插入控件文本”，不是直接计算法术伤害。
+- 因此当前结论：SoD_SP `SpellDetails` 很可能不直接实现完整无目标魔法伤害公式，而是读取魔法书 UI 控件中已经存在的数值字段并增强显示；真正需要继续追的是原版/HD 在魔法书控件创建或刷新时，谁给该控件数值字段（疑似 `+8`）赋值。
+- 已排除一条错误方向：带 `target stack`、目标 HP/数量的 SoD_SP 代码链属于战场施法/预览/实际施法相关路径，不是魔法书右键无目标详情算法。
+
+## 原版法术伤害相关函数链（确认）
+
+### FUN_004e52f0 @ 0x4E52F0 — 取有效法术等级
+
+签名：
+
+```cpp
+int __thiscall FUN_004e52f0(int spellId, int heroContext)
+```
+
+- 读取 `o_Spell[spellId]` 的 school flags（`PTR_DAT_00687fa8 + spellId * 0x88 + 0x1c`）。
+- 根据英雄对应的魔法学派等级（气/水/土/火）返回有效法术等级（0-3）。
+- 内部调用 `FUN_004e5370(schoolFlags, heroContext)` 做学校等级换算。
+- 在魔法书窗口 `FUN_005a3560` 中被调用：
+
+```cpp
+iVar4 = FUN_004e52f0(iVar6, *(undefined4 *)(DAT_00699420 + 0x53c0));
+```
+
+其中 `DAT_00699420` 是 BattleMgr，`+0x53c0` 是当前英雄指针。
+
+### FUN_004e54b0 @ 0x4E54B0 — 带额外检查的法术等级
+
+类似 `FUN_004e52f0`，但还会从 `o_Spell + (level + spellId * 0x22) * 4 + 0x20` 取值，并调用 `FUN_0044a850` 做额外检查。
+
+### FUN_004e6260 @ 0x4E6260 — 英雄法术特长加成
+
+签名：
+
+```cpp
+int __thiscall FUN_004e6260(int hero, int spellId, int creatureLevel, int baseValue)
+```
+
+- 检查 `hero->specialty` 类型是否为 3（法术特长）。
+- 检查特长对应的 spellId 是否匹配。
+- 匹配后按 spellId 分支处理：
+  - `case 0x0f`（雷鸣爆弹）：返回 `baseValue / 2`
+  - `case 0x2b/0x2c/0x2d/0x2e/0x30/0x35`：返回固定表 `DAT_0063eaa8` 中值
+  - `case 0x2f`：返回 2
+  - `case 0x33`：返回 `3 - baseValue`
+  - `case 0x37`：返回 `DAT_0063eac4` 表值
+  - `default`：按英雄等级和目标等级算额外加成
+- `hero + 0x1a` 是英雄特长 ID。
+
+### FUN_005a8c60 @ 0x5A8C60 — 法术说明文本生成
+
+用于生成法术详细描述文本。
+- 引用 `o_Spell[spellId * 0x88 + 0x10]`（法术名）。
+- 按 spellId 分支生成说明文本。
+- 包含伤害数值的文本格式化。
+
+### FUN_005a2b90 @ 0x5A2B90 — 法术提示字符串
+
+生成法术简短提示文本（tooltip）。
+- 读取 `o_Spell[spellId * 0x88]`（spell flags）。
+- 按 flags 和 spellId 分支。
+- 对伤害类法术会格式化数值。
+
+### 当前推断：无目标魔法伤害值链
+
+```text
+1. effectiveLevel = FUN_004e52f0(spellId, hero)
+2. baseDamage = o_Spell[effectiveLevel].effect[effectiveLevel]
+              + o_Spell[effectiveLevel].eff_power * hero->power
+3. specialtyBonus = FUN_004e6260(hero, spellId, 1, baseDamage)
+4. Sorcery 加成
+5. displayDamage = 最终值
+```
+
+### 待确认
+
+- `FUN_004e52f0` 的第二个参数到底是 hero 指针还是 hero->power。
+- `o_Spell` 结构的 `effect` 数组与 `eff_power` 字段的确切偏移。
+- Sorcery 在原版里的应用位置（是在 `FUN_005a8c60` 文本生成时加，还是在更底层）。
+
+### 已确认：英雄特长体系
+
+#### spec 表结构
+
+- **spec 表指针**：`*(_ptr_*)0x679C80`（需要一次解引用）
+- **每条记录** 0x28 字节，用 hero_id 索引
+- **hero_id**：`*(int*)((char*)hero + 0x1a)`
+- **hero_level**：`*(short*)((char*)hero + 0x55)`
+- **字段**：
+  - `+0`: spec_type（0=技能特长, 3=法术特长）
+  - `+4`: spec_param（技能特长时=HSS_常量；法术特长时=spellId）
+
+#### spec_type=0 技能特长
+
+当 spec_type=0 且 spec_param=25(HSS_SORCERY) 时，为**魔力特长**。
+
+魔力特长不通过 `FUN_004e6260` 起作用（该函数对 spec_type≠3 的英雄返回 0），而是直接修改 Sorcery 技能的乘数。
+
+#### 魔力特长公式（实测确认）
+
+```text
+effective_sorcery_pct = sorcery_base_pct × (1 + hero_level / 20.0)
+```
+
+- sorcery_base_pct: Basic=0.05, Advanced=0.10, Expert=0.15
+- 浮点计算，最终 `ftol` 截断
+- **必须已学会 Sorcery 副技能才生效**（无技能时 base=0，特长加成也为 0）
+
+实测（58 级、专家魔力、冰bolt sp=92）：
+```text
+base = 50 + 20×92 = 1890
+mult = 1 + 0.15×(1 + 58/20) = 1 + 0.15×3.9 = 1.585
+damage = (int)(1890 × 1.585) = 2995  ✓ (魔法书显示一致)
+```
+
+#### homm3.h 主属性偏移修正
+
+homm3.h 中 `power` 定义在 +1142(0x476)，与 `attack` 同偏移，这是定义错误。
+实际 4 个主属性在 0x476~0x479，顺序为 ATK/DEF/SPW/KNO：
+
+```cpp
+int atk = *(unsigned char*)((char*)hero + 0x476);
+int def = *(unsigned char*)((char*)hero + 0x477);
+int spw = *(unsigned char*)((char*)hero + 0x478);
+int kno = *(unsigned char*)((char*)hero + 0x479);
+```
+
+原版代码确认（`FUN_004e6390` 等）从 `param_1 + 0x476` 开始连续读 4 字节。
