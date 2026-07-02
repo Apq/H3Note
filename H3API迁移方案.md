@@ -83,6 +83,22 @@ H3API.hpp 是否封装了 DirectDraw 操作需确认。如果没有：
 - 保留 `<ddraw.h>` + 手动 `LPDIRECTDRAW` 调用
 - 这不影响整体迁移，DD 操作通常很少
 
+### 兼容层策略（MegaDesc / BattleValueInfo 实践结果）
+
+对于大量裸偏移访问的项目，不强行把所有旧类型改成 H3API 类型安全封装。实际可行策略是：
+
+- 用 `#define _H3API_PATCHER_X86_` + `#include <H3API.hpp>` 替换旧头文件。
+- 保留单翻译单元 `modules/*.inc.cpp` 结构。
+- 对 `_Pcx8_`、`_Dlg_`、`_Hero_`、`_Spell_`、`_BattleMgr_`、`_BattleStack_` 等只补插件实际用到的最小兼容结构。
+- 裸偏移逻辑先保留，避免一次性重写已验证算法。
+- `CALL_*` 逐步替换为 `THISCALL_*`，或在兼容层中提供旧宏转发。
+- DirectDraw 后台缓冲区路径继续手动定义，H3API 不负责该渲染路径。
+
+当前验证：
+- `H3PngSupport`：完整迁移，0 error 0 warning。
+- `H3MegaDesc`：完整迁移，0 error 0 warning，已提交 `0f2efb7`。
+- `H3BattleValueInfo`：本地迁移编译通过，0 error 0 warning，待游戏内验证。
+
 ### CALL 宏
 | 旧 | 新 |
 |---|---|

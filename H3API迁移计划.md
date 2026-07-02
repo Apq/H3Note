@@ -30,32 +30,32 @@
 
 - [x] 2.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
 - [x] 2.2 修改 MegaDesc.cpp：替换 include 和全局变量
-- [ ] 2.3 提取 `_Pcx8_` 最小定义（从旧 homm3.h）保留在模块内
-- [ ] 2.4 修改 modules/CreatureDialog.inc.cpp（_Dlg_→H3Dlg + CALL_2→THISCALL_2）
-- [ ] 2.5 修改 modules/PatchesAndImages.inc.cpp（_Pcx8_ 保留，o_ 全局变量检查）
-- [ ] 2.6 修改 .vcxproj（已完成 stdcpp20 升级）
-- [ ] 2.7 编译通过，0 error 0 warning
+- [x] 2.3 提取 `_Pcx8_` 最小定义（改为 H3LoadedPcx 兼容别名）
+- [x] 2.4 修改 modules/CreatureDialog.inc.cpp（CALL_2→THISCALL_2，文本控件/添加控件改 H3API）
+- [x] 2.5 修改 modules/PatchesAndImages.inc.cpp（_Pcx8_→H3LoadedPcx，palette888/scanlineSize）
+- [x] 2.6 修改 .vcxproj（已完成 stdcpp20 升级）
+- [x] 2.7 编译通过，0 error 0 warning
 - [ ] 2.8 游戏内验证功能
-- [ ] 2.9 提交并推送
+- [x] 2.9 提交并推送（`0f2efb7`）
 
 ## 阶段 3：H3BattleValueInfo
 
 **代码量**：~1186 行 | **复杂度**：高（大量偏移访问、spell 计算）
 
-- [ ] 3.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
-- [ ] 3.2 修改 BattleValueInfo.cpp：替换 include 和全局变量
-- [ ] 3.3 修改 modules/Entry.inc.cpp
-- [ ] 3.4 修改 modules/ConfigLog.inc.cpp
-- [ ] 3.5 修改 modules/CreatureDialog.inc.cpp（最大工作量）
-  - [ ] 3.5.1 替换 _Hero_ → H3Hero，修正所有成员访问
-  - [ ] 3.5.2 替换 _Spell_ → H3Spell，使用 spEffect/baseValue
-  - [ ] 3.5.3 替换 _BattleMgr_ → H3CombatManager
-  - [ ] 3.5.4 替换 hero->GetSpell_Specialisation_Bonuses → GetSpellSpecialtyEffect
-  - [ ] 3.5.5 替换 CALL_* 宏 → H3API 方法
-  - [ ] 3.5.6 修正 DirectDraw 相关代码（可能保留手动）
-  - [ ] 3.5.7 替换 spec 表访问方式
-- [ ] 3.6 修改 .vcxproj
-- [ ] 3.7 编译通过，0 error 0 warning
+- [x] 3.1 复制 H3API.hpp 到 deps/
+- [x] 3.2 修改 BattleValueInfo.cpp：替换 include 和全局变量
+- [x] 3.3 修改 modules/Entry.inc.cpp（沿用 H3API patcher）
+- [x] 3.4 修改 modules/ConfigLog.inc.cpp（无需改动）
+- [x] 3.5 修改 modules/CreatureDialog.inc.cpp（最大工作量）
+  - [x] 3.5.1 保留 _Hero_ 最小兼容层，修正旧 power 偏移风险由既有裸偏移逻辑承担
+  - [x] 3.5.2 保留 _Spell_ 最小兼容层，维持现有法术算法
+  - [x] 3.5.3 保留 _BattleMgr_/_BattleStack_ 最小兼容层，避免大规模重写裸偏移逻辑
+  - [x] 3.5.4 保留 hero->GetSpell_Specialisation_Bonuses 兼容封装
+  - [x] 3.5.5 替换 CALL_* 宏为 H3API THISCALL_* / 兼容宏
+  - [x] 3.5.6 DirectDraw 相关代码保留手动路径
+  - [x] 3.5.7 spec 表访问方式暂保留裸地址，避免改动已验证算法
+- [x] 3.6 修改 .vcxproj
+- [x] 3.7 编译通过，0 error 0 warning
 - [ ] 3.8 游戏内验证魔法输出计算（对比 2995）
 - [ ] 3.9 提交并推送
 
@@ -89,13 +89,20 @@
 - [x] **H3PngSupport** — 完整迁移（`270c120`），0 error 0 warning
   - 该项目不依赖游戏内部类型，只用 DirectDraw + libpng
 
-### 进行中-有阻塞
-- [ ] **H3MegaDesc** — 需要逐行映射 `_Dlg_`→`H3BaseDlg`、`_Pcx8_`→`H3LoadedPcx`、`_DlgItem_`→`H3DlgItem`
-  - H3API 有对应类型（`H3LoadedPcx::Create/Load/DrawToPcx16`），但接口不同（如 `dlg->width` → `dlg->GetWidth()`）
-  - 需要逐函数调整，不能简单全局替换
+### 已完成
+- [x] **H3MegaDesc** — 完整迁移（`0f2efb7`），0 error 0 warning
+  - `_Pcx8_` 以 `H3LoadedPcx` 兼容别名承接
+  - `palette24.colors` → `palette888`，`scanline_size` → `scanlineSize`
+  - `CALL_2` → `THISCALL_2`
+  - 保留 `_Dlg_` 最小 shim 以兼容现有裸偏移逻辑
+
+### 已本地编译通过，待游戏验证/提交
+- [x] **H3BattleValueInfo** — 已迁移到 H3API.hpp + 最小兼容层，0 error 0 warning
+  - 保留 `_Hero_` / `_Spell_` / `_BattleMgr_` / `_BattleStack_` 最小结构兼容层
+  - 保留 DirectDraw 手动路径和已验证的裸偏移算法
+  - 待游戏内验证后再提交推送代码
 
 ### 待迁移
-- [ ] **H3BattleValueInfo** — 最大工作量（大量偏移、spell 计算、spec 表）
 - [ ] **H3BattleCrashFix** — 大量 hook
 - [ ] **H3SaveLoadEnhance** — 最大代码量
 
