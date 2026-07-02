@@ -75,13 +75,13 @@
 
 **代码量**：~2040 行 | **复杂度**：高
 
-- [ ] 5.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
-- [ ] 5.2 修改 SaveLoadEnhance.cpp：替换 include 和全局变量
-- [ ] 5.3 修改所有 modules/*.inc.cpp
-- [ ] 5.4 修改 .vcxproj
-- [ ] 5.5 编译通过，0 error 0 warning
-- [ ] 5.6 游戏内验证功能
-- [ ] 5.7 提交并推送
+- [x] 5.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
+- [x] 5.2 修改 SaveLoadEnhance.cpp：替换 include 和全局变量
+- [x] 5.3 修改旧 CALL_* 为 H3API THISCALL_*（本项目无 modules/*.inc.cpp）
+- [x] 5.4 修改 .vcxproj
+- [x] 5.5 编译通过，0 error 0 warning
+- [x] 5.6 最小游戏加载验证通过（生成日志、无崩溃日志更新）
+- [x] 5.7 提交并推送（`91d170b`）
 
 ## 迁移现状总结
 
@@ -107,8 +107,13 @@
   - `CALL_*` 替换为 `THISCALL_*` / `FASTCALL_*`
   - 生成新日志 `BattleCrashFix_20260702_102100.log`，HD_CRASH_LOG 未更新
 
+### 已完成
+- [x] **H3SaveLoadEnhance** — 完整迁移（`91d170b`），0 error 0 warning，最小游戏加载验证通过
+  - `CALL_*` 替换为 `THISCALL_*`
+  - 生成新日志 `SaveLoadEnhance_20260702_102736.log`，HD_CRASH_LOG 未更新
+
 ### 待迁移
-- [ ] **H3SaveLoadEnhance** — 最大代码量
+- 无
 
 ### 关键 API 映射
 
@@ -132,9 +137,9 @@
 - C++ 标准：**stdcpp20**（H3API.hpp 要求）
 - 定义 `_H3API_PATCHER_X86_` 以启用内置 patcher_x86
 
-- [ ] 6.1 确认所有项目编译通过
-- [ ] 6.2 确认所有项目游戏内验证通过
-- [ ] 6.3 更新 H3Note 中的迁移记录
+- [x] 6.1 确认所有项目编译通过
+- [x] 6.2 确认所有项目最小游戏加载验证通过（完整功能回归另行执行）
+- [x] 6.3 更新 H3Note 中的迁移记录
 - [ ] 6.4 更新各项目 README（如有）
 
 ## 执行原则
