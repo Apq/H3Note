@@ -97,7 +97,7 @@ H3API.hpp 是否封装了 DirectDraw 操作需确认。如果没有：
 当前验证：
 - `H3PngSupport`：完整迁移，0 error 0 warning。
 - `H3MegaDesc`：完整迁移，0 error 0 warning，已提交 `0f2efb7`。
-- `H3BattleValueInfo`：迁移完成，0 error 0 warning，最小游戏加载验证通过，已提交 `286f095`。
+- `H3BattleValueInfo`：迁移完成，0 error 0 warning，最小游戏加载验证通过，旧 homm3 deps 已清理，已提交 `43529a6`。
 - `H3BattleCrashFix`：迁移完成，0 error 0 warning，最小游戏加载验证通过，已提交 `416df82`。
 - `H3SaveLoadEnhance`：迁移完成，0 error 0 warning，最小游戏加载验证通过，已提交 `91d170b`。
 
