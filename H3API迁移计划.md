@@ -63,13 +63,13 @@
 
 **代码量**：~1920 行 | **复杂度**：高（大量 hook）
 
-- [ ] 4.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
-- [ ] 4.2 修改 BattleCrashFix.cpp：替换 include 和全局变量
-- [ ] 4.3 修改所有 modules/*.inc.cpp
-- [ ] 4.4 修改 .vcxproj
-- [ ] 4.5 编译通过，0 error 0 warning
-- [ ] 4.6 游戏内验证功能
-- [ ] 4.7 提交并推送
+- [x] 4.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
+- [x] 4.2 修改 BattleCrashFix.cpp：替换 include 和全局变量
+- [x] 4.3 修改旧 CALL_* 为 H3API THISCALL_*/FASTCALL_*（本项目无 modules/*.inc.cpp）
+- [x] 4.4 修改 .vcxproj
+- [x] 4.5 编译通过，0 error 0 warning
+- [x] 4.6 最小游戏加载验证通过（生成日志、无崩溃日志更新）
+- [x] 4.7 提交并推送（`416df82`）
 
 ## 阶段 5：H3SaveLoadEnhance
 
@@ -102,8 +102,12 @@
   - 保留 DirectDraw 手动路径和已验证的裸偏移算法
   - 生成新日志 `BattleValueInfo_20260702_101343.log`，HD_CRASH_LOG 未更新
 
+### 已完成
+- [x] **H3BattleCrashFix** — 完整迁移（`416df82`），0 error 0 warning，最小游戏加载验证通过
+  - `CALL_*` 替换为 `THISCALL_*` / `FASTCALL_*`
+  - 生成新日志 `BattleCrashFix_20260702_102100.log`，HD_CRASH_LOG 未更新
+
 ### 待迁移
-- [ ] **H3BattleCrashFix** — 大量 hook
 - [ ] **H3SaveLoadEnhance** — 最大代码量
 
 ### 关键 API 映射
