@@ -56,8 +56,8 @@
   - [x] 3.5.7 spec 表访问方式暂保留裸地址，避免改动已验证算法
 - [x] 3.6 修改 .vcxproj
 - [x] 3.7 编译通过，0 error 0 warning
-- [ ] 3.8 游戏内验证魔法输出计算（对比 2995）
-- [ ] 3.9 提交并推送
+- [x] 3.8 最小游戏加载验证通过（生成日志、无崩溃）；魔法输出对比 2995 待后续实战回归
+- [x] 3.9 提交并推送（`286f095`）
 
 ## 阶段 4：H3BattleCrashFix
 
@@ -97,10 +97,10 @@
   - 保留 `_Dlg_` 最小 shim 以兼容现有裸偏移逻辑
 
 ### 已本地编译通过，待游戏验证/提交
-- [x] **H3BattleValueInfo** — 已迁移到 H3API.hpp + 最小兼容层，0 error 0 warning
+- [x] **H3BattleValueInfo** — 完整迁移（`286f095`），0 error 0 warning，最小游戏加载验证通过
   - 保留 `_Hero_` / `_Spell_` / `_BattleMgr_` / `_BattleStack_` 最小结构兼容层
   - 保留 DirectDraw 手动路径和已验证的裸偏移算法
-  - 待游戏内验证后再提交推送代码
+  - 生成新日志 `BattleValueInfo_20260702_101343.log`，HD_CRASH_LOG 未更新
 
 ### 待迁移
 - [ ] **H3BattleCrashFix** — 大量 hook
