@@ -83,7 +83,43 @@
 - [ ] 5.6 游戏内验证功能
 - [ ] 5.7 提交并推送
 
-## 阶段 6：清理
+## 迁移现状总结
+
+### 已完成
+- [x] **H3PngSupport** — 完整迁移（`270c120`），0 error 0 warning
+  - 该项目不依赖游戏内部类型，只用 DirectDraw + libpng
+
+### 进行中-有阻塞
+- [ ] **H3MegaDesc** — 需要逐行映射 `_Dlg_`→`H3BaseDlg`、`_Pcx8_`→`H3LoadedPcx`、`_DlgItem_`→`H3DlgItem`
+  - H3API 有对应类型（`H3LoadedPcx::Create/Load/DrawToPcx16`），但接口不同（如 `dlg->width` → `dlg->GetWidth()`）
+  - 需要逐函数调整，不能简单全局替换
+
+### 待迁移
+- [ ] **H3BattleValueInfo** — 最大工作量（大量偏移、spell 计算、spec 表）
+- [ ] **H3BattleCrashFix** — 大量 hook
+- [ ] **H3SaveLoadEnhance** — 最大代码量
+
+### 关键 API 映射
+
+| 旧 | H3API |
+|---|---|
+| `_Dlg_*` | `h3::H3BaseDlg*` / `h3::H3Dlg*` |
+| `dlg->width/height` | `dlg->GetWidth()/GetHeight()` |
+| `_DlgItem_*` | `h3::H3DlgItem*` |
+| `_EventMsg_*` | `h3::H3Msg*` |
+| `_Pcx8_*` | `h3::H3LoadedPcx*` |
+| `_Pcx8_::Load(name)` | `H3LoadedPcx::Load(name)` |
+| `_Pcx8_::CreateNew(name,w,h)` | `H3LoadedPcx::Create(name,w,h)` |
+| `pcx8->DrawToPcx16(...)` | `pcx8->DrawToPcx16(...)` |
+| `pcx8->palette24` | `pcx8->palette888` |
+| `_Pcx16_*` | `h3::H3LoadedPcx16*` |
+| `CALL_2(ret,__thiscall,addr,a,b)` | `THISCALL_2(ret,addr,a,b)` |
+| `CALL_3(ret,__thiscall,addr,a,b,c)` | `THISCALL_3(ret,addr,a,b,c)` |
+| `o_DD` / `o_DDSurfaceBackBuffer` | 手动定义（H3API不含DD封装） |
+
+### 编译要求
+- C++ 标准：**stdcpp20**（H3API.hpp 要求）
+- 定义 `_H3API_PATCHER_X86_` 以启用内置 patcher_x86
 
 - [ ] 6.1 确认所有项目编译通过
 - [ ] 6.2 确认所有项目游戏内验证通过
