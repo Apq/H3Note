@@ -12,25 +12,25 @@
 
 **代码量**：~397 行 | **复杂度**：低
 
-- [ ] 1.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
-- [ ] 1.2 修改 PngSupport.cpp：替换 include 和全局变量
-- [ ] 1.3 修改 modules/Entry.inc.cpp：替换 Patcher 初始化
-- [ ] 1.4 修改 modules/PngSurface.inc.cpp：替换 DirectDraw 类型
-- [ ] 1.5 修改 modules/ConfigLog.inc.cpp
-- [ ] 1.6 修改 .vcxproj（移除旧 deps 编译项）
-- [ ] 1.7 编译通过，0 error 0 warning
+- [x] 1.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
+- [x] 1.2 修改 PngSupport.cpp：替换 include 和全局变量
+- [x] 1.3 修改 modules/Entry.inc.cpp：替换 Patcher 初始化（无需改动，GetPatcher 在 H3API.hpp 中）
+- [x] 1.4 修改 modules/PngSurface.inc.cpp：替换 DirectDraw 类型（保留手动 DD 全局变量）
+- [x] 1.5 修改 modules/ConfigLog.inc.cpp（无需改动，不依赖 homm3.h）
+- [x] 1.6 修改 .vcxproj（移除旧 deps 编译项，升级 stdcpp20）
+- [x] 1.7 编译通过，0 error 0 warning
 - [ ] 1.8 游戏内验证功能
-- [ ] 1.9 提交并推送
+- [x] 1.9 提交并推送
 
 ## 阶段 2：H3MegaDesc
 
 **代码量**：~954 行 | **复杂度**：中
 
-- [ ] 2.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
-- [ ] 2.2 修改 MegaDesc.cpp：替换 include 和全局变量
-- [ ] 2.3 修改 modules/Entry.inc.cpp
-- [ ] 2.4 修改 modules/ConfigLog.inc.cpp
-- [ ] 2.5 修改 .vcxproj
+- [x] 2.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
+- [x] 2.2 修改 MegaDesc.cpp：替换 include 和全局变量
+- [ ] 2.3 修改 modules/CreatureDialog.inc.cpp（_Dlg_→H3Dlg 类型替换 + CALL_2→THISCALL_2）
+- [ ] 2.4 修改 modules/PatchesAndImages.inc.cpp（如有依赖）
+- [ ] 2.5 修改 .vcxproj（升级 stdcpp20）
 - [ ] 2.6 编译通过，0 error 0 warning
 - [ ] 2.7 游戏内验证功能
 - [ ] 2.8 提交并推送
