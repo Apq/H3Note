@@ -25,15 +25,18 @@
 ## 阶段 2：H3MegaDesc
 
 **代码量**：~954 行 | **复杂度**：中
+**特殊依赖**：`_Pcx8_*`（图像量化/合成）、`_Dlg_*`（窗口控件遍历）、`CALL_2`
+**阻塞点**：H3API 不包含 `_Pcx8_` 封装，需保留手动定义或从旧 homm3.h 提取最小子集
 
 - [x] 2.1 复制 H3API.hpp 到 deps/，删除旧 deps 文件
 - [x] 2.2 修改 MegaDesc.cpp：替换 include 和全局变量
-- [ ] 2.3 修改 modules/CreatureDialog.inc.cpp（_Dlg_→H3Dlg 类型替换 + CALL_2→THISCALL_2）
-- [ ] 2.4 修改 modules/PatchesAndImages.inc.cpp（如有依赖）
-- [ ] 2.5 修改 .vcxproj（升级 stdcpp20）
-- [ ] 2.6 编译通过，0 error 0 warning
-- [ ] 2.7 游戏内验证功能
-- [ ] 2.8 提交并推送
+- [ ] 2.3 提取 `_Pcx8_` 最小定义（从旧 homm3.h）保留在模块内
+- [ ] 2.4 修改 modules/CreatureDialog.inc.cpp（_Dlg_→H3Dlg + CALL_2→THISCALL_2）
+- [ ] 2.5 修改 modules/PatchesAndImages.inc.cpp（_Pcx8_ 保留，o_ 全局变量检查）
+- [ ] 2.6 修改 .vcxproj（已完成 stdcpp20 升级）
+- [ ] 2.7 编译通过，0 error 0 warning
+- [ ] 2.8 游戏内验证功能
+- [ ] 2.9 提交并推送
 
 ## 阶段 3：H3BattleValueInfo
 
