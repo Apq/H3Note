@@ -102,16 +102,21 @@
 
 ## 六、手动/自动存档区分
 
-最终方案：**析构时记录**。游戏执行顺序为「先关闭对话框（析构）→ 再调用 SaveGame」，因此 `g_save_dialog_visible` 在 SaveGame 到达时已被析构清掉。
+当前稳定方案：**只在 `SaveGame` 真正发生时记录手动存档**。
 
-解决：`HH_DialogDestructor` 中对 `DK_SAVE` 和 `DK_LOAD` 都读取当前选中项文件名并记录。这样无论 SaveGame 何时到达，文件名已被析构 hook 捕获。
+游戏保存顺序可能是「先关闭存档对话框（析构）→ 再调用 `SaveGame`」，因此 `g_save_dialog_visible` 在 `SaveGame` 到达时可能已经被清掉。解决方式是：
 
-`g_save_dialog_visible` 仍作为 `HH_SaveGame` 的辅助机制（可见时调用 SaveGame → 手动存档），但主要记录路径是析构。
+- `HH_DialogDestructor` 对 `DK_SAVE` 不记录文件名，只设置 `g_save_dialog_recently_closed` 和短有效期。
+- `HH_SaveGame` 在“存档界面仍可见”或“存档窗口刚关闭后的短窗口期”内收到调用，才记录 `save_path` 文件名。
+- `DK_LOAD` 不在析构时记录；取消/关闭读档窗口不能污染最后记录。
+
+这样能避免旧方案“打开存档窗口后取消/关闭也会更新记录”的误判。
 
 **已废弃方案**（不要再用）：
-- ~~按返回地址 `[esp]` 区分手动/自动~~：不稳定，HD Mod 包装层导致返回地址变化
-- ~~`IsLikelyAutoSaveName()` 文件名启发式~~：无法可靠区分
-- ~~`MANUAL_SAVE_RETURN_ADDRS` 白名单~~：析构先于 SaveGame 的时序使其无效
+- ~~按返回地址 `[esp]` 区分手动/自动~~：不稳定，HD Mod 包装层导致返回地址变化。
+- ~~`IsLikelyAutoSaveName()` 文件名启发式~~：无法可靠区分。
+- ~~`MANUAL_SAVE_RETURN_ADDRS` 白名单~~：析构先于 SaveGame 的时序使其无效。
+- ~~析构时直接记录 `DK_SAVE` / `DK_LOAD` 当前选中项~~：取消/关闭窗口也会污染记录。
 
 ## 七、全局变量
 
