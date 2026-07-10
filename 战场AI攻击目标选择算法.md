@@ -38,7 +38,7 @@
   - `fight_value` 位于 `_CreatureInfo_ + 0x3C`；
   - `AI_value` 位于 `_CreatureInfo_ + 0x40`；
   - `_CreatureInfo_` 条目大小为 `0x74`。
-- `modules\CreatureDialog.inc.cpp` 的 `GetCreatureFightValueById()` 明确读取：
+- `modules\FightValue.inc.cpp` 的 `GetCreatureFightValueById()` 明确读取：
 
 ```cpp
 char* table = *(char**)0x6747B0;
