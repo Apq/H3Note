@@ -77,10 +77,40 @@ SOP 能用 F12 随时弹自己的设置窗，**我们的插件同样可以**—�
 - H3Auto 先例：热键面板（打铁助手 J 键/面板）在同一台机器上长期运行验证；
 - 开局真随机先例：H3DlgItem/AddItem/绘制链在同环境验证通过。
 
-## 6. 待验证清单（更新）
+## 6. 实施记录：H3RndNew 0.2.2026.1006 设置窗落地（2026-10-06）
+
+§5.2 路线已在 H3RndNew 实现并通过编译（0 警告 0 错误），热键 F11 + 设置窗（全局真随机/热键修改）。实施中把热键落点从「候选」变成确认事实，全部静态反编译证据：
+
+### 6.1 键盘消息链（全局热键的正确落点）
+
+- **窗口过程 `0x4F8290`**（`FUN_004f8290`，869 字节）：`RegisterClassA` 的 `lpfnWndProc`（Heroes3Src `blk_4f0000.c` 行 2184）。消息分派：`<0x13` 窗口管理；`0x100<=msg<0x102` → **键盘入口 `0x4EC1C0`**；`0x200..0x206` → 鼠标入口 `0x4EC370`；`0x111` → 菜单 `0x4F86F0`；其余 DefWindowProc。
+- **键盘入口 `0x4EC1C0`**（`FUN_004ec1c0`，427 字节，`bool __fastcall(hwnd@ECX, msg@EDX, wparam@栈, lparam@栈)`）：
+  - 入口守卫：`DAT_00699530`（输入管理器）非空且 `+0x34 == 1`，否则原样返回 true（放行）。
+  - 把按键写进输入管理器环形槽（`DAT_00699530 + 0x83c` 为写指针，每槽 0x20 字节）：`[0]=1/2`（WM_KEYDOWN/UP）、`[1] = lparam>>16 & 0xFF`（**扫描码 set 1**）、`[3] = GetKeyState(Ctrl/Alt/Shift)` 组合位。
+  - **扫描码 set 1 = H3 内部键码**（`eVKey` 全表吻合：F1=0x3B=59、Enter=28、A=30、F11=0x57=87、F12=0x58=88）——`H3Msg::KeyPressed()`（读 `subtype` 字段）返回的就是它。插件配热键时直接存扫描码即可，无需 VK 转换。
+  - **原版先例**：该函数内 `piVar1[1]==0x3B`（F1）→ `FUN_004f86f0(0x9c74,...)`、`==0x3E`（F4）→ `FUN_004f86f0(0x9c49,...)`——**在键盘入口直接打开界面**是原版自己的模式，hook 此处弹 H3 模态对话框与原生行为同源。
+  - 返回值：生成了消息返回 false(0)=已处理（WndProc 即返 0），否则 true 继续走 DefWindowProc。吞键 = 返回 0。
+  - 自动重复过滤：`lparam & 0x40000000`（bit 30）为 1 表示按住重复。
+- **SOP 的 F12**：`SoD_SP.dll` 二进制 3 处 0x7B 比较中 `0x10002B42` 一处是真响应逻辑（`cmp eax,0x7B; jne` 后调原版 `0x4317D0`），另两处（`0x100148D2`/`0x10014AE9`）是 VK 0x7B 与 H3 码 88 并存的转换/热键表处理——它 hook 的具体原版函数未再深挖（§6 待验证 2 保留），我们已用 0x4EC1C0 独立达标。
+
+### 6.2 自建 H3 原生对话框（H3API 官方支持的继承路线）
+
+- `struct X : h3::H3Dlg` 直接继承，override `OnCreate()`（建控件）/`OnLeftClick(itemId, msg)`（点击分发）；`dlg.Start()` 模态运行（内部 `OnCreate` → `vShowAndRun(FALSE)`，退出自动恢复鼠标光标）；`Stop()` 请求关闭。栈对象即可（析构销毁 items+背景+vDestroy）。
+- 构造 `H3Dlg(w,h)`（x/y=-1 自动居中，makeBackground=TRUE 自动木纹底+边框）。
+- 控件：`H3DlgDef::Create(x,y,w,h,id,def,frame,...)`（勾选框 ChkBlue.def 帧 0/1）、`H3DlgText::Create(x,y,w,h,text,font,color,id,align,bk)`（SetText 改文字）、`H3DlgTransparentItem::Create(x,y,w,h,id)`（透明点击区）、`H3DlgDefButton::Create(x,y,id,def,frame,clickFrame,closeDialog,hotkey)`（官方用法见 H3API.hpp:28527：`("iokay.def",0,1,TRUE,NH3VKey::H3VK_ENTER)`，closeDialog=TRUE 点击自动关窗）。
+- 热键侦听放键盘 hook 层（不是窗的 OnKeyPress）：hook 里侦听态吞掉一切 WM_KEYDOWN（ESC 取消/修饰键跳过/其余即新键），从同线程直接调窗对象的刷新方法更新键名文字——避开「OnKeyPress 依赖消息到达而消息已被吞」的循环依赖。
+- 防重入：`InterlockedCompareExchange` 弹窗闸 + 窗开着时热键本身吞掉；SEH 兜底与 C++ 对象展开分函数（同函数会 C2712）。
+
+### 6.3 中文文案
+
+源码 UTF-8 + 运行时 `MultiByteToWideChar(CP_UTF8)` → `WideCharToMultiByte(936)` 转 GBK 再交给游戏（开局模块手写 GBK 字节表的自动化替代，smalfont.fnt 渲染 GBK 中文已验证）。
+
+## 7. 待验证清单（更新）
 
 1. ~~F12 设置窗口归属~~ ✅ 已实锤：SoD_SP 插件的对话框（标题「SoD_SP选项」）。
-2. SoD_SP 的 F12 检测点（3 处 0x7B 比较的确切函数）——做自定义热键时可参考其 hook 位置（它挂的键盘链位置就是「全程可用」的证明点）。
+2. SoD_SP 的 F12 hook 具体挂点（0x10002B42 所在函数的 hook 目标）——已被 0x4EC1C0 路线替代，仅在研究 SOP 共存时再看。
 3. HD 官方设置窗口（HD.exe 启动器里的那个）与本机 F12 行为无关，不再追。
 4. HD+ 替换 RNG 的具体形态——影响全程真随机 hook 的共存顺序，四种组合（HD±、OriginalRNG±）实机验证。
-5. 新插件热键选型：确认 F11/F10 在本机整合版未被占用（SOP 只占 F12 的概率高，但需实机确认）。
+5. ~~新插件热键选型~~ → 已定 F11（eVKey 87），设置窗内可改；F11 是否与本机其它整合插件冲突待用户实机反馈（SOP 占 F12 已确认）。
+6. 设置窗在选图界面等 H3 自带模态对话框上的嵌套表现——第一版未放宽守卫，待实测。
+7. 弹窗守卫用的 `DAT_00699530+0x34==1` 在启动早期/切图过场的值——若实测有场景弹不出，再研究该标志的全 0/1 生命周期。
