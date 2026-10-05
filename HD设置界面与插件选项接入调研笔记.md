@@ -117,6 +117,12 @@ SOP 能用 F12 随时弹自己的设置窗，**我们的插件同样可以**—�
 
 ### 6.4 动态 H3DlgText 的绘制坑（2026-10-06 用户实测后确认）
 
-- `H3DlgText::SetText()` 只更新文字对象；`Draw()` 调 vtable 的 `vDrawToWindow()` 写绘制缓冲；`Refresh()` 只是调用父窗 `Redraw(x,y,w,h)` 将区域刷新。对同一动态文字控件连续 `SetText→Draw→Refresh`，不会自动擦掉旧字符串像素，所以「F11」切换为「请按新键…」会重叠。
-- 设置窗标题、说明文字由 `H3Dlg` 框架正常绘制，关闭时不残留；动态键名是运行期间手工 `Draw+Refresh`，绕过了这条静态 item 重绘路径，关闭后可能留下残影。
-- 修复模式：动态文字更新前先 `Hide()` 旧文字；使用同一位置的 `Box66x32.pcx` 框控件重新 `Draw+Refresh` 恢复底色；再 `SetText→ShowActivate→Draw→Refresh` 绘制新文字。窗口的 `OnOK/OnCancel/OnClose` 关闭路径先执行同样的清理。这个顺序是用户实测反馈驱动的确认机制，不是推测。
+- `H3DlgText::SetText()` 只更新文字对象；`Draw()` 调 vtable 的 `vDrawToWindow()` 写绘制缓冲；`Refresh()` 只是把矩形从缓冲 blit 上屏。对动态文字控件连续 `SetText→Draw→Refresh`，不会自动擦掉旧字符串像素——旧「F11」与新「请按新键…」像素叠加，且这些直写像素在对话框关闭后留在屏幕上（残留的是开窗时画的那一版，改键后也不更新）。
+- **根因（关键时序）：`H3Dlg::Start()` 先执行 `OnCreate()`，之后才 `vShowAndRun` → `vShow` 保存底层画面。** 在 `OnCreate()` 里对动态控件调 `Draw()/Refresh()`，等于把动态文字画进“关闭时要恢复的背景快照”里——关闭时这层含 F11 的旧画面被整块贴回屏幕，这就是“关窗后残留、且残留的永远是 F11 而不是新键”的直接原因。
+- 关窗后手工调 `H3WindowManager::H3Redraw(dlg 矩形)` **不能修这个问题**：`vShow`（0x5FF0A0）里保存的旧画面在窗口生命周期内一直是恢复源，运行期把新像素刷上去也会被后续背景恢复路径盖掉；必须从源头禁止动态控件绕过框架绘制。
+- 正确模式（实测修正后的方案）：
+  1. 动态文字用**原生自绘控件**（如 `H3DlgTextPcx`，文字+背景框一体），文字作为控件状态交给框架；
+  2. `OnCreate()` 里只 `SetText`（或构造参数）设置初始文字，**绝不调用 `Draw/Refresh`**；
+  3. 运行期更新只做 `SetText` + `H3Dlg::Redraw()`（`vRedraw(TRUE,-65535,65535)` 按 AddItem 顺序整窗重画并刷新），不做控件级直写；
+  4. 关窗后**不要**再手工 `H3Redraw` 对话框矩形，恢复背景交给 `vShow/vHide` 的保存-恢复链。
+- 参考时序：`H3Dlg::Start()`（H3API.hpp 内联）：`OnCreate()` → `vShowAndRun(FALSE)`（0x5FFA20 模态循环）；`vShow`（0x5FF0A0）在显示前保存底层画面。
