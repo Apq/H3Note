@@ -1,4 +1,4 @@
-﻿# 逆向笔记 — BattleCrashFix
+# 逆向笔记 — BattleCrashFix
 
 本项目集中修复英雄无敌3 SoD HD Mod 战斗中的已确认崩溃问题。
 
@@ -99,7 +99,7 @@ duration 到 0 → 再次调用 RemoveObstacle
 |----|------|
 | 10 | Quicksand（流沙） |
 | 22 | Land Mine（地雷） |
-| 23 | Force Field（力场） |
+| 12 | Force Field（大力神盾/力场） |
 | 24 | Fire Wall（火墙） |
 | 34 | Remove Obstacle（驱除障碍） |
 | 35 | Dispel（驱散） |
@@ -383,3 +383,59 @@ else    → 方向数 = 6
 HD Mod 的 LoHook 在**函数边界**（标准 prologue: push ebp; mov ebp,esp）安装 trampoline 可靠。但在**函数内部**的任意指令上安装时，trampoline 的指令长度分析可能出错，导致 CPU 跳转到指令中间执行。
 
 实测：在 0x43E811 和 0x43E8BC 安装 LoHook 后，崩溃在 0x43E80E（jne 指令的第 4 字节），且 hook 函数从未被触发（日志无记录）。结论：避免在函数内部使用 LoHook。
+
+## 大力神盾（Force Field）施法机制补充（SoD，静态反编译 + 运行时数据读取）
+
+### 法术编号与施法入口
+
+- SoD 法术表中大力神盾是 **spell id 12**；此前本节旧表把障碍类型编号 23 误写成法术编号，已更正。障碍类型/hex 位语义中的 23 不能替代法术表编号 12。
+- `H3CombatManager::CastSpell` 为 `FUN_005a0140 @ 0x5A0140`，参数为 `(spell, hex, cast_type, hex2, skill_level, spell_power)`。大力神盾属于地点目标法术，`hex` 是锚点格，不能复用状态魔法的 `hex=-1` 群体调用。
+- 施法核心在 `case 0x0C`（`blk_5a0000.c` L1358 起）选择障碍定义、创建 `H3Obstacle` 并写入战场障碍 vector。`FUN_005a8c60 @ 0x5A8C60` 只是施法消息/动画收尾路径，不是力场创建函数。
+
+### 大小、几何与合法性
+
+- 运行中的 SoD 进程读取 `H3ObstacleInfo` 静态表 `0x63CF18`：
+  - 基础土系（skill_level=0）`numSquares=2`，relative cells 为 `0, -16`；DEF 名称为 `C15spE1.def`。
+  - 中级/高级土系（skill_level>1）使用 `0x63CF2C`，`numSquares=3`，relative cells 为 `0, -16, -34`；DEF 名称为 `C15spE10.def`。
+  - `skill_level=1` 仍走基础两格定义；也就是说实际长度分界是“高级/专家（>1）”与非高级，而不是每一级各一种长度。
+- 相对格会按六边形棋盘行奇偶做横向修正；原版在 `FUN_005a3cd0 @ 0x5A3CD0` 的 `spell==0x0C` 分支逐格验证：越界、边界列、已有不可通行/障碍位或非空生物格时，地点目标不合法。
+- 力场落地后，相关战斗格设置 `forcefield` 位 `0x20`，并同时设置 `localObstacle` 位 `0x02`，组合值为 `0x22`；锚点格另设置 anchor 位 `0x01`。移动寻路因此把墙当作阻挡，而非生物状态。
+
+### 障碍对象与持续时间
+
+- `H3Obstacle` 大小 0x18：`def +0x00`、`info +0x04`、`anchorHex +0x08`、`ownerSide +0x09`、`featureTriggered +0x0A`、`featureDamage +0x0C`、`featureDuration +0x10`、`animationIndex +0x14`。
+- 大力神盾创建记录时，施法 case 将 `featureDuration` 写为 **2**（`local_4c=0x3C` 是动画/资源字段，不是 duration；`local_4c=0x3C/0x3D` 的数值不要误读为回合数）。因此基础与高级/专家大力神盾均按战斗回合清理循环倒数两回合；土系等级只改变两格/三格形状。
+- 回合清理 `0x475A70` 区域每轮将 `duration` 减一，减到 0 后调用 `RemoveObstacle @ 0x466710`。手动驱除障碍、驱散/地震等路径可提前删除记录并清除格子位。
+- 已知原版缺陷：`RemoveObstacle` 释放 `def` 并置 NULL，但不清零 `featureDuration`；之后到期清理再次移除同一条记录会在空 def 上崩溃。因此 `H3BattleCrashFix` 的防护必须保留，双力盾策略不得绕过该清理链路自行释放 DEF。
+
+### 施法方与策略含义
+
+- 创建记录的 `ownerSide` 来自施法时的 `currentActiveSide`；力场归施法方所有。障碍不是目标生物的 buff，不应进入状态魔法“有目标/持续回合”判断。
+- 当前已确认的是原版单次大力神盾机制；“力盾战法”与“双力盾战法”的具体策略（何时放、锚点如何选、是否允许两道墙同时存在、是否利用两回合重叠）尚未实现，必须另行设计并实测。
+
+### 证据坐标
+
+- `Heroes3Src/src/h3/audio_video/blk_5a0000.c`：`FUN_005a0140` 的 Force Field 分支 L1358-L1438；`FUN_005a3cd0` 的地点合法性分支 L2483-L2591。
+- `Heroes3Src/src/h3/uncategorized/blk_460000.c`：障碍 vector 插入/移动函数 `FUN_0046aa60 @ 0x46AA60`、障碍格标记函数 `FUN_00466590 @ 0x466590`。
+- `H3API/include/h3api/H3Combat/H3Obstacle.hpp`、`H3ObstacleInfo.hpp`：结构布局；运行时读取确认静态墙形表 `0x63CF18`。
+
+### 表布局字节级实测（2026-10-06，H3Auto 版本门卫取证）
+
+从本机 SoD exe（`D:\Heroes3\Heroes3_2026.05.01\Heroes3.exe`）文件偏移 0x23CF18（= VA 0x63CF18 − ImageBase 0x400000）直接读 48 字节，确认每张 `H3ObstacleInfo` 条目占 **0x14（20）字节**，布局：
+
+| 条目内偏移 | 类型 | 含义 | 基础表 0x63CF18 | 高级表 0x63CF2C |
+|---|---|---|---|---|
+| +0x00 | WORD | 类型/资源号 | 0x0103 | 0x0104 |
+| +0x02 | WORD | numSquares | 2 | 3 |
+| +0x04 | signed char[8] | 相对格（有效前 numSquares 个） | {0, -16(0xF0)} | {0, -16(0xF0), -34(0xDE)} |
+| +0x0C | DWORD | 保留 | 0 | 0 |
+| +0x10 | char* | DEF 名指针 | 0x66D234 → "C15spE1.def" | 0x66D224 → "C15spE10.def" |
+
+原始字节（0x23CF18 起）：
+```
+00 00 00 00 03 01 02 00 00 F0 00 00 00 00 00 00 34 D2 66 00
+00 00 00 00 04 01 03 00 00 F0 DE 00 00 00 00 00 24 D2 66 00
+```
+注意 `numSquares` 不在条目首 DWORD（首 DWORD 高位 WORD 是 0x0103/0x0104 类型号）；`+0x04` 起的相对格是**有符号字节**，0xF0=-16、0xDE=-34，与运行时读取结论一致。
+
+用途：H3Auto `CrashGuard` 版本门卫（`GuardVerifySodBytes_`）以此作为 SoD 数据指纹——完整版/HotA/改版 exe 不可能同时吻合两表的计数值、负偏移与 "C15sp" DEF 前缀；不吻合时不挂任何钩子，防偏移错配崩溃。
