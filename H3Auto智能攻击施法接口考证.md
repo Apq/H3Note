@@ -192,6 +192,9 @@ return THISCALL_4(INT32, 0x4E54B0,
 
 静态可确认这两个接口都接受地形相关参数；费用接口还接受敌方 army。智能施法执行前应使用真实 hero/terrain/target 上下文计算资格和费用，不能以“魔力大于某个固定常量”替代。具体函数返回值对所有白名单攻击法术的实战含义仍需要动态确认。
 
+2026-10-11 补核敌军军队来源：[`H3CombatManager.hpp:135`](<../H3API/include/h3api/H3Managers/H3CombatManager.hpp#L135>) 定义 `army[2]` 在 `+0x54C4`；[`all_functions_named.c:30250`](<../Heroes3Src/src/decompiled/all_functions_named.c#L30250>) 的 `FUN_0041faa0` 调用费用函数时传 `*(mgr + (0x1532-side)*4)`。side=0/1 时偏移分别为 `0x54C8/0x54C4`，对应 `cm->army[1-side]`，地形参数取 `cm->specialTerrain`。因此当前攻击执行使用 `hero->CalculateSpellCost(spell, cm->army[1-side], cm->specialTerrain)`，不从敌英雄取军队，也不以 `nullptr` 猜测无英雄怪物战的费用；军队指针缺失时不提交。这是来源与调用参数的静态对照，具体英雄/怪物战成本仍列实机验证。
+
+
 ### 4.3 原版 `FUN_005a3cd0` 目标坐标路径
 
 [`Heroes3Src/src/decompiled/all_functions_named.c`](../Heroes3Src/src/decompiled/all_functions_named.c) 第 327244 行开始是 `FUN_005a3cd0 @ 0x005a3cd0`。其静态代码显示：
