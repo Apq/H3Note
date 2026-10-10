@@ -169,11 +169,7 @@ BOOL8 availableSpell[70];
 
   这是 OR 语义，表示学会或由宝物提供访问权。
 
-智能攻击施法的“严格 learned”白名单资格不能用 `GetSpellExpertise(spell) > 0` 替代，也不能只调用 `HasSpell`：
-
-- `GetSpellExpertise` 返回的是等级/专精相关值，不是 `learnedSpells` 原始位；
-- `HasSpell` 会把 artifact available 也算进去；
-- 本版要求白名单攻击法术严格检查 `learnedSpells[spell_id]`，宝物可用但英雄未学会不自动纳入。
+智能攻击施法的白名单资格（2026-10-11 用户裁定后）：使用 `HasSpell`（`learnedSpells[spell] | availableSpell[spell]`），与原版施法面板同口径——装备/卷轴赋予的攻击魔法也参与自动施放；学校技能等级（`GetSpellExpertise > 0`）仍不构成资格。expertise 按实算（神器赋予而英雄未学该系技能时为 0），`CastSpell` 英雄路径内部会重算等级与力量，行为与玩家手动经神器施法一致。
 
 ### 4.2 等级、地形与费用
 
