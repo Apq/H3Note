@@ -171,6 +171,14 @@ BOOL8 availableSpell[70];
 
 智能攻击施法的白名单资格（2026-10-11 用户裁定后）：使用 `HasSpell`（`learnedSpells[spell] | availableSpell[spell]`），与原版施法面板同口径——装备/卷轴赋予的攻击魔法也参与自动施放；学校技能等级（`GetSpellExpertise > 0`）仍不构成资格。expertise 按实算（神器赋予而英雄未学该系技能时为 0），`CastSpell` 英雄路径内部会重算等级与力量，行为与玩家手动经神器施法一致。
 
+用户明确点名的装备来源是**泰坦之箭（Titan's Thunderbolt）**，且用户裁定（2026-10-11）：神器与卷轴都**只有穿戴/实际生效时才计入**，放在背包不算。
+
+- `availableSpell`(+0x430) 位只由 `bodyArtifacts`(+0x12D，19 个穿戴位)派生。静态证据：反序列化函数（约 172070–114 行）先把 `learnedSpells` 整体镜像到 `availableSpell`，再遍历 `param_1 + 0x12D` 的穿戴位，按神器定义里的法术 id 置 `*(hero + 0x430 + spell) = 1`；背包数组 `backpackArtifacts`(+0x1D4)与背包数量(+0x3D1)不参与该字段。
+- 因此 `HasSpell = learnedSpells | availableSpell` 的语义就是“已学或穿戴装备赋予”：泰坦之箭穿上即列出、脱下即消失（摘下后位清零，实时反映），背包里放着的神器/卷轴不会置位、不算入——与用户口径一致。
+- 插件不缓存穿戴状态或卷轴数量：资格完全跟随 `HasSpell`，装备/脱下后下一次面板打开或下一次施法判定即生效。
+
+expertise 按实算（穿戴神器赋予而英雄未学该系技能时为 0），`CastSpell` 英雄路径内部会重算等级与力量，行为与玩家手动经神器施法一致。
+
 ### 4.2 等级、地形与费用
 
 H3API `H3Hero::GetSpellExpertise` 在 [`H3API/include/h3api/H3Heroes/H3Hero.cpp`](../H3API/include/h3api/H3Heroes/H3Hero.cpp) 第 53–55 行调用 `0x4E52F0`：
