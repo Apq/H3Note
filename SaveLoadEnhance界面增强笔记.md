@@ -1,8 +1,10 @@
-# SaveLoadEnhance 逆向笔记（Heroes3_2026.05.01 / HD Mod）
+# SaveLoadEnhance 界面增强笔记（Heroes3_2026.05.01 / HD Mod）
 
+> 本文是自研插件 H3SaveLoadEnhance 的开发逆向记录：插件只增强游戏存档/读档界面的显示与选择体验，不实现或替代游戏本体存档/读档核心。
+> 为实现界面增强，以下记录核对了游戏本体对话框、生命周期和相关调用点；游戏核心存读档另见《游戏本体存档读档核心逆向笔记.md》。
 > 用 radare2 静态反汇编 `D:\Heroes3\Heroes3_2026.05.01\Heroes3.exe`（baddr=0x400000）确认。
 > radare2 路径：`D:\Programs\radare2-6.1.6-w64\bin\radare2.exe`；全分析 `aaa` 约耗时 25 秒。
-> 本文只记录**已反汇编+实测验证**的事实。
+> 本文只记录**已反汇编+实测验证**的界面事实。
 
 ## 一、界面区分
 
