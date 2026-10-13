@@ -50,17 +50,21 @@
 
 ## 5. 完整背包视觉构成（2026-10-13 追加，构造函数反汇编实测）
 
-相对弹窗 405×459 视觉区原点 `(x, y)`（`0x01006620(x,y,405,459)` 处理外框/阴影）：
+相对弹窗 405×459 视觉区原点 `(x, y)`：
 
 | 元素 | 位置(相对 x,y) | 尺寸 | 资源/ID |
 | --- | --- | --- | --- |
+| 外框阴影 | 右/底边缘 | 见下 | `0x01006620(x,y,w,h)` 画 4 条暗化条 |
 | 标题文本 | `(0, 18)` | 405×30 | `bigfont.fnt`，文案从 `HD.Ini.Txt` 节读、默认 `"Backpack"` |
 | 背景网格图 | `(18, 50)` | 369×369 | **`BkPack.pcx`**（DLL 内字符串实为 .pcx；H3API `HDassets::BIG_BACKPACK` 注释写 .bmp 与实际不符） |
 | hit item | `(18+col*46, 50+row*46)` | 47×47 | ID `1000+row*8+col`（8×8，步距 46） |
 | DEF 图标 | `(20+col*46, 51+row*46)` | 44×44 | ID `2000+row*8+col`；卷轴 `def.SpScrArt` 帧=subtype（法术ID），普通 `artifact.def` 帧=artifactId |
+| 状态条 | `(8, 441)` | 389×18 | ID 84，默认文案 RVA 0x13EA2D，item 存 `dlg+0x74` |
 
-- 字符串表位置：`"Backpack"` RVA 0x1426A4、`"BkPack.pcx"` 0x1426B0、`"def.SpScrArt"` 0x1426BC、`"artifact.def"` 0x1426CC（.rdata）；创建代码在构造函数 `0x039B72..0x039DB5`（`H3DlgPcx` 走 `0x01005E40`，文本走 `0x00617492`+thiscall `0x005BC6A0` 即 `H3DlgText`）。
+- 字符串表位置：`"Backpack"` RVA 0x1426A4、`"BkPack.pcx"` 0x1426B0、`"def.SpScrArt"` 0x1426BC、`"artifact.def"` 0x1426CC（.rdata）；创建代码在构造函数 `0x039B72..0x39DB5` + 状态条 `0x039DD3`（`H3DlgPcx` 走 `0x01005E40`，文本走 `0x00617492`+thiscall `0x005BC6A0` 即 `H3DlgText`）。
+- **`0x01006620` 不是画底图**：它读 `[0x6992D0]+0x40` 绘制对象，4 次 thiscall `0x0044E2C0`（暗化/阴影条）：右 `(x+w, y+9, 7, h-9)`、`(x+w, y+8, 8, h-8)`、底 `(x+9, y+h, w-2, 7)`、`(x+8, y+h, w, 8)`；stdcall ret 0x10，可被插件直接转发调用（H3RndNew 已在 attach 时同款调用画仓库面板阴影）。
 - 卷轴/普通宝物分支由全局 `0x01157FB8` 判别；空槽（`hero+0x1D4+index*8` 首 4 字节为 0）不建 DEF。
+- 未 dump 段：构造函数 `0x039E1B..0x039E66`（状态条后续/模态前收尾约 0x4B 字节）。
 
 ## 6. 生产消费方式（H3RndNew 阶段 B/C/D 及 2026-10-13 同构改版）
 
@@ -68,7 +72,8 @@
 - `0x039E80` LoHook：detach（恢复原 callback 指针、关闭 session）。
 - 事务成功后置 `dlg+0x7C = -2` 并 `CloseDialog`，走原生"重建背包"重开路径，icon/hit/tooltip/状态栏由游戏自己重建。
 - 验证入口：`tests/warehouse_ui_abi.inc.cpp`（离线 0x1A 复刻 + 真实 patcher）与 `tests/warehouse_ui_flow_test.cpp`（纯布局/事务模型），全量回归 PASS；游戏内行为留给用户实机验收。
-- 2026-10-13 用户实机反馈"面板过宽、无背景"后改版：仓库面板固定 405×459 与完整背包同尺寸，`BkPack.pcx` 背景放 `(18,50)`，标题条 405×30 @ `(0,18)` 用 `bigfont.fnt`，64 槽（8×8，步距 46，DEF 44×44 偏 +2,+1）与原生网格同构；锚点 = `GetList()` 中 ID 1000 控件坐标 − (18,50)。布局最小屏宽 834（8+405+8+405+8），不足 fail closed。
+- 2026-10-13 用户实机反馈"面板过宽、无背景"后改版：仓库面板固定 405 宽与完整背包一致，`BkPack.pcx` 背景放网格原点，标题条 405×30 用 `bigfont.fnt`，64 槽（8×8，步距 46，DEF 44×44 偏 +2,+1）与原生网格同构；锚点 = `GetList()` 中 ID 1000 控件坐标 − (18,50)。布局最小屏宽 834，不足 fail closed。
+- 2026-10-13 第二轮（用户裁定"抄整个扩展界面，比它高一点点"）：面板高 459→**523**（+顶部 Tab 行 32 预留 +底部 32 分页行）；网格原点下移 (18,82)；attach 时直接转发调用 `HD_SOD+0x6620` 画同款右/底阴影（Install 缓存函数指针，CrashGuard __try 内）；最小屏高门槛随之 459→523（800×600 仍可显示，宽 834 fail）。
 
 ## 7. 待验证（不混入确认段）
 
