@@ -48,14 +48,29 @@
 5. **ESP/SEH**：整个窗口执行前后外层 ESP 平衡；show 内抛异常时 SEH 默认传播，两钩与 show 各恰一次；callback `ret 8` 直调与替换均正确清栈。
 6. **`0x039E80` 后置钩**：该点 dialog 仍存活（析构在 `0x039EB8`），可安全恢复 callback 指针；displaced 指令 `mov [ecx+8],0` 7 字节。
 
-## 5. 生产消费方式（H3RndNew 阶段 B/C/D）
+## 5. 完整背包视觉构成（2026-10-13 追加，构造函数反汇编实测）
+
+相对弹窗 405×459 视觉区原点 `(x, y)`（`0x01006620(x,y,405,459)` 处理外框/阴影）：
+
+| 元素 | 位置(相对 x,y) | 尺寸 | 资源/ID |
+| --- | --- | --- | --- |
+| 标题文本 | `(0, 18)` | 405×30 | `bigfont.fnt`，文案从 `HD.Ini.Txt` 节读、默认 `"Backpack"` |
+| 背景网格图 | `(18, 50)` | 369×369 | **`BkPack.pcx`**（DLL 内字符串实为 .pcx；H3API `HDassets::BIG_BACKPACK` 注释写 .bmp 与实际不符） |
+| hit item | `(18+col*46, 50+row*46)` | 47×47 | ID `1000+row*8+col`（8×8，步距 46） |
+| DEF 图标 | `(20+col*46, 51+row*46)` | 44×44 | ID `2000+row*8+col`；卷轴 `def.SpScrArt` 帧=subtype（法术ID），普通 `artifact.def` 帧=artifactId |
+
+- 字符串表位置：`"Backpack"` RVA 0x1426A4、`"BkPack.pcx"` 0x1426B0、`"def.SpScrArt"` 0x1426BC、`"artifact.def"` 0x1426CC（.rdata）；创建代码在构造函数 `0x039B72..0x039DB5`（`H3DlgPcx` 走 `0x01005E40`，文本走 `0x00617492`+thiscall `0x005BC6A0` 即 `H3DlgText`）。
+- 卷轴/普通宝物分支由全局 `0x01157FB8` 判别；空槽（`hero+0x1D4+index*8` 首 4 字节为 0）不建 DEF。
+
+## 6. 生产消费方式（H3RndNew 阶段 B/C/D 及 2026-10-13 同构改版）
 
 - `0x039E66` LoHook：attach（布局锚点取 `GetList()` 中 ID 1000 控件实际坐标）、保存并在 `dlg+0x70` 写入 `__stdcall(this,msg)` 包装。
 - `0x039E80` LoHook：detach（恢复原 callback 指针、关闭 session）。
 - 事务成功后置 `dlg+0x7C = -2` 并 `CloseDialog`，走原生"重建背包"重开路径，icon/hit/tooltip/状态栏由游戏自己重建。
 - 验证入口：`tests/warehouse_ui_abi.inc.cpp`（离线 0x1A 复刻 + 真实 patcher）与 `tests/warehouse_ui_flow_test.cpp`（纯布局/事务模型），全量回归 PASS；游戏内行为留给用户实机验收。
+- 2026-10-13 用户实机反馈"面板过宽、无背景"后改版：仓库面板固定 405×459 与完整背包同尺寸，`BkPack.pcx` 背景放 `(18,50)`，标题条 405×30 @ `(0,18)` 用 `bigfont.fnt`，64 槽（8×8，步距 46，DEF 44×44 偏 +2,+1）与原生网格同构；锚点 = `GetList()` 中 ID 1000 控件坐标 − (18,50)。布局最小屏宽 834（8+405+8+405+8），不足 fail closed。
 
-## 6. 待验证（不混入确认段）
+## 7. 待验证（不混入确认段）
 
 - `Arg(1)/Arg(2)` 的参数语义（生产代码仅作锚点缺失时的回退，不依赖）。
 - `-2` 重开链路、Esc/右键/联机关闭路径、HeldArtifact 与第一击拦截的实机交互。
