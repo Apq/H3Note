@@ -59,11 +59,12 @@
 | 背景网格图 | `(18, 50)` | 369×369 | **`BkPack.pcx`**（DLL 内字符串实为 .pcx；H3API `HDassets::BIG_BACKPACK` 注释写 .bmp 与实际不符） |
 | hit item | `(18+col*46, 50+row*46)` | 47×47 | ID `1000+row*8+col`（8×8，步距 46） |
 | DEF 图标 | `(20+col*46, 51+row*46)` | 44×44 | ID `2000+row*8+col`；卷轴 `def.SpScrArt` 帧=subtype（法术ID），普通 `artifact.def` 帧=artifactId |
-| 状态条 | `(8, 441)` | 389×18 | ID 84，默认文案 RVA 0x13EA2D，item 存 `dlg+0x74` |
+| 整窗背景 | `(0, 0)` | 405×459 | RVA `0x039B25` 调 RVA `0x0FADB0`，返回 H3DlgPcx16，DiBoxBck.PCX + dialgbox.def 生成 |
+| 状态条 | `(8, 433)` | 389×18 | H3DlgTextPcx，ID 777，HD_TStat.pcx，默认文案 RVA 0x13EA2D，item 存 `dlg+0x74` |
 
 - 字符串表位置：`"Backpack"` RVA 0x1426A4、`"BkPack.pcx"` 0x1426B0、`"def.SpScrArt"` 0x1426BC、`"artifact.def"` 0x1426CC（.rdata）；创建代码在构造函数 `0x039B72..0x39DB5` + 状态条 `0x039DD3`（`H3DlgPcx` 走 `0x01005E40`，文本走 `0x00617492`+thiscall `0x005BC6A0` 即 `H3DlgText`）。
 - **`0x01006620` 不是画底图**：它读 `[0x6992D0]+0x40` 绘制对象，4 次 thiscall `0x0044E2C0`（暗化/阴影条）：右 `(x+w, y+9, 7, h-9)`、`(x+w, y+8, 8, h-8)`、底 `(x+9, y+h, w-2, 7)`、`(x+8, y+h, w, 8)`；stdcall ret 0x10，可被插件直接转发调用（H3RndNew 已在 attach 时同款调用画仓库面板阴影）。
-- 卷轴/普通宝物分支由全局 `0x01157FB8` 判别；空槽（`hero+0x1D4+index*8` 首 4 字节为 0）不建 DEF。
+- 卷轴/普通宝物分支由全局 `0x01157FB8` 判别；宝物ID有符号比较 `<0`（`jl`）的槽不建 DEF；不是 ID=0。
 - 未 dump 段：构造函数 `0x039E1B..0x039E66`（状态条后续/模态前收尾约 0x4B 字节）。
 
 ## 6. 生产消费方式（H3RndNew 阶段 B/C/D 及 2026-10-13 同构改版）
@@ -74,9 +75,33 @@
 - 验证入口：`tests/warehouse_ui_abi.inc.cpp`（离线 0x1A 复刻 + 真实 patcher）与 `tests/warehouse_ui_flow_test.cpp`（纯布局/事务模型），全量回归 PASS；游戏内行为留给用户实机验收。
 - 2026-10-13 用户实机反馈"面板过宽、无背景"后改版：仓库面板固定 405 宽与完整背包一致，`BkPack.pcx` 背景放网格原点，标题条 405×30 用 `bigfont.fnt`，64 槽（8×8，步距 46，DEF 44×44 偏 +2,+1）与原生网格同构；锚点 = `GetList()` 中 ID 1000 控件坐标 − (18,50)。布局最小屏宽 834，不足 fail closed。
 - 2026-10-13 第二轮（用户裁定"抄整个扩展界面，比它高一点点"）：面板高 459→**523**（+顶部 Tab 行 32 预留 +底部 32 分页行）；网格原点下移 (18,82)；attach 时直接转发调用 `HD_SOD+0x6620` 画同款右/底阴影（Install 缓存函数指针，CrashGuard __try 内）；最小屏高门槛随之 459→523（800×600 仍可显示，宽 834 fail）。
-- 2026-10-13 第三轮（用户反馈"格子外空白"）：完整背包非格子区显示的是原画面+阴影，而仓库面板区底下是黑边；补 H3DlgPcx16 整块底板 405×523：`BackgroundRegion`(diboxback.pcx 256×256 平铺) + `FrameRegion`(dialogbox.def 玩家色边框，色=hero->owner)，原版对话框标准做法。
+- 2026-10-13 第三轮（用户反馈"格子外空白"）：完整背包非格子区显示的是原画面+阴影，而仓库面板区底下是黑边；补 H3DlgPcx16 整块底板 405×523：`BackgroundRegion`(diboxback.pcx 256×256 平铺) + `FrameRegion`(dialogbox.def 玩家色边框，色=hero->owner)，原版对话框标准做法。（第三轮的通用 DIBOXBACK 手工拼板方案已在第 7 节被推翻，见下。）
 
-## 7. 待验证（不混入确认段）
+## 7. 整窗背景生成器更正（2026-10-13，只读逆向已证实）
+
+此前第三轮记录“完整背包非格子区显示原画面+阴影”以及用通用 DIBOXBACK/DLGBOX 拼仓库整窗的描述均不正确，现以完整反汇编 `D:\\logs\\dsh\\scripts\\h3-warehouse-skin\\fadb0-complete.txt` 和资源解析报告 `skin-analysis.txt` 为准：
+
+- 构造函数 RVA `0x039B25` 调 HD_SOD RVA `0x0FADB0`，完整范围 `[0x0FADB0,0x0FB175)`，长度 `0x3C5`。签名 `H3DlgPcx16* __fastcall(x,y,width,height,itemId,statusBar,colorIndex)`；ECX=x、EDX=y，五个栈参数，`ret 0x14`。原生完整背包参数 `(x,y,405,459,0,1,color)`。
+- 返回控件 `H3DlgPcx16*` 的 `+0x30` 为 `H3LoadedPcx16*` 画布；画布自己的 `+0x30` 才是像素 buffer。背景由 `DiBoxBck.PCX` 256×256 裁剪平铺和 `dialgbox.def` 11 帧拼成，不是独立 `sb...` 文件。`sb%.4u%.4u%.1u%.1u` 只作为资源管理器运行时缓存 key，参数为宽、高、`!statusBar`、颜色。
+- 背景先做底纹四块平铺，再绘制边缘及四角；statusBar 非零选帧 8/9/10（带底部状态槽），零选 2/3/7。资源位于 `Data\\H3bitmap.lod` 与 `Data\\H3sprite.lod`。离线重建 `405×459` 与扩高 `405×523` 对照图在 `D:\\logs\\dsh\\scripts\\h3-warehouse-skin\\background_comparison.png`；未运行游戏，不能据此宣称实机像素验收通过。
+- 底部 `389×18` 状态文字另由 H3DlgTextPcx 构造，位置 `(x+8,y+433)`、ID 777，保存至 `dlg+0x74`；不是背景 item。
+
+## 8. 双层交互与消息中和（2026-10-13 第四轮，静态逆向 + 离线回归）
+
+用户裁定交互契约：背包扩展打开时只显示"仓库"按钮；点击后才展开仓库层（同一 dialog owned-items，游戏内顶层模态即"置顶"）；仓库关闭按钮只收起仓库层；**仓库展开时 Esc 只收起仓库层，仓库关闭时 Esc 保持原生关闭背包**。
+
+已确认的静态事实（反汇编 `D:\logs\dsh\scripts\h3-warehouse-toggle\callback-complete.txt`）：
+
+- 原生 callback `0x0395D0..0x0396AB` 先完成 common/网络/超时处理，结果存 `[ebp-0x28]`；`0x0396AB` 起进入消息分发（command=4 hit-test、`0x200/C` 左键按下、`0x200/E` 右键、`command=2/subtype=1` Esc、`0x039987` 未知回退关闭）。
+- Esc 关闭路径：`0x0399B5` 处 `cmp [eax],2` / `cmp [ecx+4],1`，命中则写 `dlg+0x78=-1` 并调 vtable `+0x38` 关闭。
+- 未知/外部点击回退：`0x039987` 写 `dlg+0x78=-1` 走同一关闭 vtable；`0x0399F4` 为 `mov eax,[ebp-0x28]` 的公共结果出口。
+- 生产实现选择：不劫持 `0x0396AB`/`0x039987` 指令流，而是沿用 `dlg+0x70` callback 包装——自有分支处理完成后把被消费的消息中和为 `command=MOUSE_OVER(4)/subtype=0/itemId=0`，再调用原生 callback 恰好一次。原生 callback 对 command=4 只做 hit-test 分发，不进入关闭分支，common/网络/超时处理天然保留。
+- save-under：展开前 `H3LoadedPcx16::Create("",w,h)` + `CopyRegion(GetDrawBuffer(),x,y)`；收起时 `DrawToPcx16(x,y,FALSE,screen,0,0)` 回写 + `H3WindowManager::H3Redraw` 局部重绘 + `Destroy(TRUE)`。`HideDeactivate` 只清 ACTIVE|VISIBLE 不还像素，必须靠 save-under 回写。
+- 离线契约回归：`SuppressPinnedClose`（expanded + `0x200/C|D` + 非原生 ID 才中和；`0xE`/`0xA`/Esc/网络/超时/未知命令一律透传）已入 `warehouse_ui_flow_test.cpp`（77 checks）。
+
+## 9. 待验证（不混入确认段）
 
 - `Arg(1)/Arg(2)` 的参数语义（生产代码仅作锚点缺失时的回退，不依赖）。
 - `-2` 重开链路、Esc/右键/联机关闭路径、HeldArtifact 与第一击拦截的实机交互。
+- 双层交互的实机效果：仓库按钮位置/字体渲染（GBK 字节串 + bigfont）、save-under 回写是否残留、展开态外部左键中和后的实际行为、Esc 分流第一击是否真的不关背包——均需用户游戏内验收。
+- 消息中和（改写 `H3Msg` 后再调原生 callback）对 command=4 分支的副作用：静态看只做 hit-test，但 `0x396C0` 起 `ItemCommand(dlg,itemId,...)` 仍会执行；若实机出现状态栏/悬停异常，需改为 return_address 重定向方案（`0x0396AB` LoHook + 跳 `0x0399F4` 出口，保留 `[ebp-0x28]` 返回值）。
