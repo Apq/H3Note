@@ -107,7 +107,14 @@
 - Tab顺序共14项：常规、卷轴、装备、头部、肩部、项链、武器、盾牌、胸甲、戒指、靴子、杂物、机械、魔法书；窗口显示4项，箭头只改变 `TabOffsetShift`，所有页签控件归 panel owned-items。常规定义为全部道具入口；scroll artifact id=1优先，id=0魔法书仍查询原生 `GetSlot`。
 - `一键取出` ID 30201、`一键放入` ID 30202，只使用活动Tab过滤；`RetrieveAll/DepositAll` 在私有候选完整准备后一次提交 epoch。成功按原生 `dlg+0x7C=-2` 重建，避免hero数组修改后旧DEF图标/tooltip/hit状态不同步。离线 flow 142 项与 PCX 286 项通过；未启动游戏。
 
-## 10. 待验证（不混入确认段）
+## 10. 第五轮缺陷修复（2026-10-13，机器码证据确认）
+
+- **成功事务的关闭顺序**：`H3Msg::CloseDialog()`（H3API 约 29358）实际跳到 `0x00491640`，写入 `command=0x200`、`subtype=0xA`、`itemId=0xA` 并返回 `2`（证据：`D:\logs\dsh\scripts\h3-warehouse-ui\modal-close-shade.txt`）。完整背包 modal loop 只有在 callback 返回 `2` 且消息仍为 `0x200/0xA` 时才退出并读取 `dlg+0x7C`（`modal-loop.txt` 114–124）。因此批量/单件成功事务先设置 `closePending`，让中和后的消息经过原生 callback 恰好一次，再在原生返回后写 `dlg+0x7C=-2`、调用 `CloseDialog` 并返回 `2`；不能在中和前调用 CloseDialog，也不能让统一 `MOUSE_OVER` 覆盖 END_DIALOG。
+- **布局拒绝而不是假平移**：`MakeLayout` 在两侧空间不足时曾规划把背包放到左缘，但 StageB 没有移动原生背包背景、标题、状态条、命中项或 DEF。因此 Attach 现在要求 `layout.backpack.x/y` 与实际 ID 1000 锚定出的原点完全一致，否则 fail closed 保留原生背包，避免同一 dialog 两套命中项重叠。
+- **Hook 安装原子性**：modal attach/end 两只 `WriteLoHook` 必须同时存在；任一失败时对已创建的另一只调用 `LoHook::Destroy()` 并清指针，`g_wh_ui_installed_` 保持 false；attach 入口也检查该标记，避免只安装半套 Hook 后产生永不 detach 的 vtable/PCX 裸指针残留。
+- 修复后全量 BAT 回归（18:08 终版）：主 DLL 与测试工程 0 warning/0 error；warehouse UI flow 170（含回调关闭顺序与布局 fail-closed 用例，顺序由生产共用 `WarehouseUiCallback.hpp::CallNativeThenFinalize` 保证）、PCX 286、UI 状态机/11 指纹 77、LoHook ABI、真实 patcher callback/RNG 并发均 PASS；部署 Release 与 Packs SHA256 均为 `C8BFD5AF792DBB2735AAECA1570B816FC8D3561C0697491EF41EDAAD4B3F5DF9`。仍未启动游戏，`-2` 重建、实际重打与存读档循环由用户验收。
+
+## 11. 待验证（不混入确认段）
 
 - `Arg(1)/Arg(2)` 的参数语义（生产代码仅作锚点缺失时的回退，不依赖）。
 - `-2` 重开链路、Esc/右键/联机关闭路径、HeldArtifact 与第一击拦截的实机交互。
