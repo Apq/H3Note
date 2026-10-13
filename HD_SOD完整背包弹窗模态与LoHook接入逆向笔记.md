@@ -103,20 +103,36 @@
 
 - `WarehouseUiButtons.inc.cpp` 的自有视觉控件沿用 H3MegaDesc：`H3DlgDefButton(iOkay.def)` 做命中和状态机，`H3DlgPcx(BkPack.pcx)` 做 PCX 层；复制 `H3DlgItem` 的15槽vtable，仅把槽4 Draw 改为四态绑定绘制。Draw在当前 dialog owned-list 中确认对象归属后才读取 DEF/visual，detach 同样先确认归属再恢复原 vtable。
 - 四态状态来源：`+0x16` 的 `0x20` 禁用、`0x01` 按下；悬停不写原生 `0x10 SELECTED`，由 `MOUSE_OVER` 的绝对坐标和自有 `hovered` 标记选择亮态。自有 PCX 控件换图前记录 `H3DlgPcx::Create` 的原始 `loadedPcx`，detach 归属仍在时恢复，避免把 PCX 替换指针交给原生析构。
-- `H3LoadedPcx::Create` 的缓冲是 4字节对齐；量化完整拷贝 `BkPack.pcx.palette888.color[256]`，再调用 `palette565.InitiateFromPalette888`。运行时纯解码只接受8bit/3-plane PCX，按每 plane 的 `bytesPerLine` RLE 解码并交错RGB；49张素材必须全部成功，否则视觉整体回退。
-- Tab顺序共14项：常规、卷轴、装备、头部、肩部、项链、武器、盾牌、胸甲、戒指、靴子、杂物、机械、魔法书；窗口显示4项，箭头只改变 `TabOffsetShift`，所有页签控件归 panel owned-items。常规定义为全部道具入口；scroll artifact id=1优先，id=0魔法书仍查询原生 `GetSlot`。
-- `一键取出` ID 30201、`一键放入` ID 30202，只使用活动Tab过滤；`RetrieveAll/DepositAll` 在私有候选完整准备后一次提交 epoch。成功按原生 `dlg+0x7C=-2` 重建，避免hero数组修改后旧DEF图标/tooltip/hit状态不同步。离线 flow 142 项与 PCX 286 项通过；未启动游戏。
+- `H3LoadedPcx::Create` 的缓冲是 4字节对齐；量化完整拷贝 `BkPack.pcx.palette888.color[256]`，再调用 `palette565.InitiateFromPalette888`。运行时纯解码只接受8bit/3-plane PCX，按每 plane 的 `bytesPerLine` RLE 解码并交错RGB。
+- 【round-6 修正】素材总数由49改为44：16按钮（4族×4态）+ 24页签（12×2态）+ 4箭头；标题不再用素材，改为原生 `H3DlgText`。按钮背景改为直接以 H3MegaDesc 原始四态 `whui_src/bv_ok0..3.pcx` 为参考，抹掉勾选图形、保留其立体斜面/边框纹理后写中文文字。44张必须全部成功，否则视觉整体回退。
+- 【round-6 修正】Tab改为12项而非14项。机械（slot 13..16）与魔法书（slot 17）不会进入背包，也就不会出现在仓库列表里，因此不列页签；`SlotTab` 仍保留 `Machine/Spellbook` 语义但 `kTabOrder` 只含12项，`IsBackpackSlot(slot)` 拒绝 13..17 使 `TabMatches` 对这两类恒为 false。窗口显示4项，箭头只改变 `TabOffsetShift`，所有页签控件归 panel owned-items。常规定义为全部道具入口；scroll artifact id=1优先，id=0魔法书仍查询原生 `GetSlot`。
+- 【round-6 废止】`一键取出` ID 30201、`一键放入` ID 30202，只使用活动Tab过滤；`RetrieveAll/DepositAll` 在私有候选完整准备后一次提交 epoch。第五轮曾在成功后按原生 `dlg+0x7C=-2` 重建重开来刷新图标/tooltip/hit；round-6 用户裁定“仓库打开后移动道具不得关闭仓库”，改为活窗口内 `WarehouseUiRefreshAfterMove_` 就地刷新（重算筛选/翻页/图标帧/计数 + 局部重绘），`-2` 与 `CloseDialog` 不再出现在成功路径。
 
-## 10. 第五轮缺陷修复（2026-10-13，机器码证据确认）
+## 10. 第五轮缺陷修复（2026-10-13，机器码证据确认；其中“关闭顺序”条 round-6 已废止）
 
-- **成功事务的关闭顺序**：`H3Msg::CloseDialog()`（H3API 约 29358）实际跳到 `0x00491640`，写入 `command=0x200`、`subtype=0xA`、`itemId=0xA` 并返回 `2`（证据：`D:\logs\dsh\scripts\h3-warehouse-ui\modal-close-shade.txt`）。完整背包 modal loop 只有在 callback 返回 `2` 且消息仍为 `0x200/0xA` 时才退出并读取 `dlg+0x7C`（`modal-loop.txt` 114–124）。因此批量/单件成功事务先设置 `closePending`，让中和后的消息经过原生 callback 恰好一次，再在原生返回后写 `dlg+0x7C=-2`、调用 `CloseDialog` 并返回 `2`；不能在中和前调用 CloseDialog，也不能让统一 `MOUSE_OVER` 覆盖 END_DIALOG。
+- **成功事务的关闭顺序（第五轮曾采用，round-6 已废止）**：`H3Msg::CloseDialog()`（H3API 约 29358）实际跳到 `0x00491640`，写入 `command=0x200`、`subtype=0xA`、`itemId=0xA` 并返回 `2`（证据：`D:\logs\dsh\scripts\h3-warehouse-ui\modal-close-shade.txt`）。完整背包 modal loop 只有在 callback 返回 `2` 且消息仍为 `0x200/0xA` 时才退出并读取 `dlg+0x7C`（`modal-loop.txt` 114–124）。第五轮因此让成功事务在原生 callback 返回后写 `dlg+0x7C=-2`、调 `CloseDialog` 并返回 `2`。该机制本身仍然成立，但 round-6 用户要求仓库打开期间移动道具不得关闭仓库，故生产路径不再下发 END_DIALOG；`CloseDialog`/`dlg+0x7C` 只保留为逆向事实记录。
 - **布局拒绝而不是假平移**：`MakeLayout` 在两侧空间不足时曾规划把背包放到左缘，但 StageB 没有移动原生背包背景、标题、状态条、命中项或 DEF。因此 Attach 现在要求 `layout.backpack.x/y` 与实际 ID 1000 锚定出的原点完全一致，否则 fail closed 保留原生背包，避免同一 dialog 两套命中项重叠。
 - **Hook 安装原子性**：modal attach/end 两只 `WriteLoHook` 必须同时存在；任一失败时对已创建的另一只调用 `LoHook::Destroy()` 并清指针，`g_wh_ui_installed_` 保持 false；attach 入口也检查该标记，避免只安装半套 Hook 后产生永不 detach 的 vtable/PCX 裸指针残留。
 - 修复后全量 BAT 回归（18:08 终版）：主 DLL 与测试工程 0 warning/0 error；warehouse UI flow 170（含回调关闭顺序与布局 fail-closed 用例，顺序由生产共用 `WarehouseUiCallback.hpp::CallNativeThenFinalize` 保证）、PCX 286、UI 状态机/11 指纹 77、LoHook ABI、真实 patcher callback/RNG 并发均 PASS；部署 Release 与 Packs SHA256 均为 `C8BFD5AF792DBB2735AAECA1570B816FC8D3561C0697491EF41EDAAD4B3F5DF9`。仍未启动游戏，`-2` 重建、实际重打与存读档循环由用户验收。
 
-## 11. 待验证（不混入确认段）
+## 11. 第六轮：图标层、命中状态位与“移动不关闭”（2026-10-13，机器码 + 生产接线）
 
+用户 round-6 裁定：按钮沿用 H3MegaDesc 原图质感但用文字；标题与原生背包标题同字号/同字体/同亮度；**仓库打开后无论怎么移动道具都不关闭，只有 X 或 Esc 才收起**；关闭控件是极端右上角的小四态 X；页签去掉机械与魔法书（12项），两个一键按钮左右交换。
+
+- **owned-items 命中测试（`0x5FF970` → `0x5FF9A0`，反编译 `blk_5f0000.c`）**：`0x5FF9A0(dlg, x, y)` 先把坐标减去 `dlg+0x18/0x1C`（dialog 客户区原点），再从 owned-list 尾部（`dlg+0x38`）向前逐项（`iVar3 -= 4`）扫描；命中条件是矩形包含 **且** `state(+0x16) & 2` 置位 **且** `(state & 8) == 0` **且** `(state & 0x1000) == 0`。`0x5FF970` 只是把命中项 `+0x10` 的 `INT16` ID 取出来，未命中返回 -1。
+- 由此推论并已按此实现：`HideDeactivate()` 清 ACTIVE|VISIBLE，是“既不显示也不参与命中”的正确调用；`Hide()` 只清 VISIBLE，**隐藏但仍会被原生命中**。同一 ID 存在多个控件时（本轮的普通/卷轴双覆盖层），只要非选中的那些都 `HideDeactivate`，逆序扫描就只会命中唯一活动项，重复 ID 是安全的。
+- **`H3DlgDef::SetFrame` 只写 `defFrame`，不加载/替换 `loadedDef`**（H3API `0x4EA800` 创建时确定 DEF 资源，`SetFrame` 见 `H3API.hpp` 27545）。因此“同一个背包格可能装普通宝物、也可能装卷轴（`def.SpScrArt` 帧=法术ID）”无法靠 SetFrame 完成资源切换：生产做法是每格创建两个同 ID 控件（`artifact.def` 与 `HDassets::SCROLL_SMALL`），按当前记录只激活其中一个；原生原件自接管起一直停用，否则收起后转移过的格子会显示构造时的旧帧。
+- **HD 卷轴模式全局是 `0x01157FB8`（RVA `0x157FB8`）**，非零时卷轴走 `def.SpScrArt`、帧=subtype，否则走 `artifact.def`、帧=artifactId；运行时由 `MakeIconView` 纯函数选择资源族。
+- **原生标题参数（反汇编确证）**：`H3DlgText(x, y+18, 405, 30, text, "bigfont.fnt", color = eTextColor::REGULAR (=1), id = 0, align = MIDDLE_CENTER, bkColor = 0)`。仓库标题复用完全相同的尺寸/字体/颜色/对齐，才能保证与原生背包标题同字号、同亮度。
+- **原生图标 DEF 几何**：44×44，网格原点相对扩展窗原点 `(+18,+50)`，格内 DEF 偏移 `(+2,+1)`，步距 46。
+- **展开态必须自己处理图标 CLICK**：自建覆盖 DEF 与原生命中项共用 ID 区间（`1000..1063` 槽命中、`2000..2063` 宝物图标）。若不适配这些 ID 的 CLICK，原生 callback 会落到 `0x039987` 的未知回退关闭分支并写 `dlg+0x78=-1`，表现为“点一下背包就关窗”。
+- **“移动不关闭”的生产语义**：成功转移只调 `WarehouseUiRefreshAfterMove_`（就地重算筛选/翻页/图标帧/计数 + 局部重绘），不再写 `dlg+0x7C=-2`，也不调 `CloseDialog`；收起仓库层只有两条路径——关闭按钮 ID 30060 与展开态 Esc。背包 modal 本身仍由原生 Esc（仓库已收起时）关闭，右键/网络/超时/未知路径继续透传。
+- **点击边沿策略**：仓库控件只中和 `LBUTTON_DOWN(0xC)`，动作只在 `LBUTTON_CLICK(0xD)` 执行一次；`IsWarehouseControlId` 覆盖 `30050/30051` 翻页箭头、`30060..30202`（关闭/打开/一键取出/一键放入/30100..30163 槽位）、`30300..30311` 页签，刻意不含背景 ID `30000..30004`。展开态下 `2000..2063` 的 DOWN 与 CLICK 都由本模块接管。
+
+## 12. 待验证（不混入确认段）
 - `Arg(1)/Arg(2)` 的参数语义（生产代码仅作锚点缺失时的回退，不依赖）。
-- `-2` 重开链路、Esc/右键/联机关闭路径、HeldArtifact 与第一击拦截的实机交互。
+- Esc/右键/联机关闭路径、HeldArtifact 与第一击拦截的实机交互。
+- round-6 新增待验证：活窗口就地刷新（不重建）后，原生 tooltip/状态栏是否仍与新数据一致；覆盖层 DEF 与原生命中项同 ID 同时存在时，长时间悬停/拖拽是否出现旧帧残留；`0x157FB8` 卷轴开关在运行时是否确实按 HD 设置翻转。
+- 必须由用户实机验收：四态按钮观感是否与 H3MegaDesc 一致、中文标题亮度、极端右上小 X 命中范围、12 页签左右滚动、两个一键按钮左右语义、以及“移动道具后仓库保持打开”。
 - 双层交互的实机效果：仓库按钮位置/字体渲染（GBK 字节串 + bigfont）、save-under 回写是否残留、展开态外部左键中和后的实际行为、Esc 分流第一击是否真的不关背包——均需用户游戏内验收。
 - 消息中和（改写 `H3Msg` 后再调原生 callback）对 command=4 分支的副作用：静态看只做 hit-test，但 `0x396C0` 起 `ItemCommand(dlg,itemId,...)` 仍会执行；若实机出现状态栏/悬停异常，需改为 return_address 重定向方案（`0x0396AB` LoHook + 跳 `0x0399F4` 出口，保留 `[ebp-0x28]` 返回值）。
