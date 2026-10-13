@@ -99,7 +99,15 @@
 - save-under：展开前 `H3LoadedPcx16::Create("",w,h)` + `CopyRegion(GetDrawBuffer(),x,y)`；收起时 `DrawToPcx16(x,y,FALSE,screen,0,0)` 回写 + `H3WindowManager::H3Redraw` 局部重绘 + `Destroy(TRUE)`。`HideDeactivate` 只清 ACTIVE|VISIBLE 不还像素，必须靠 save-under 回写。
 - 离线契约回归：`SuppressPinnedClose`（expanded + `0x200/C|D` + 非原生 ID 才中和；`0xE`/`0xA`/Esc/网络/超时/未知命令一律透传）已入 `warehouse_ui_flow_test.cpp`（77 checks）。
 
-## 9. 待验证（不混入确认段）
+## 9. 第五轮 UI 素材与批量分类接线（2026-10-13，源码/离线确认）
+
+- `WarehouseUiButtons.inc.cpp` 的自有视觉控件沿用 H3MegaDesc：`H3DlgDefButton(iOkay.def)` 做命中和状态机，`H3DlgPcx(BkPack.pcx)` 做 PCX 层；复制 `H3DlgItem` 的15槽vtable，仅把槽4 Draw 改为四态绑定绘制。Draw在当前 dialog owned-list 中确认对象归属后才读取 DEF/visual，detach 同样先确认归属再恢复原 vtable。
+- 四态状态来源：`+0x16` 的 `0x20` 禁用、`0x01` 按下；悬停不写原生 `0x10 SELECTED`，由 `MOUSE_OVER` 的绝对坐标和自有 `hovered` 标记选择亮态。自有 PCX 控件换图前记录 `H3DlgPcx::Create` 的原始 `loadedPcx`，detach 归属仍在时恢复，避免把 PCX 替换指针交给原生析构。
+- `H3LoadedPcx::Create` 的缓冲是 4字节对齐；量化完整拷贝 `BkPack.pcx.palette888.color[256]`，再调用 `palette565.InitiateFromPalette888`。运行时纯解码只接受8bit/3-plane PCX，按每 plane 的 `bytesPerLine` RLE 解码并交错RGB；49张素材必须全部成功，否则视觉整体回退。
+- Tab顺序共14项：常规、卷轴、装备、头部、肩部、项链、武器、盾牌、胸甲、戒指、靴子、杂物、机械、魔法书；窗口显示4项，箭头只改变 `TabOffsetShift`，所有页签控件归 panel owned-items。常规定义为全部道具入口；scroll artifact id=1优先，id=0魔法书仍查询原生 `GetSlot`。
+- `一键取出` ID 30201、`一键放入` ID 30202，只使用活动Tab过滤；`RetrieveAll/DepositAll` 在私有候选完整准备后一次提交 epoch。成功按原生 `dlg+0x7C=-2` 重建，避免hero数组修改后旧DEF图标/tooltip/hit状态不同步。离线 flow 142 项与 PCX 286 项通过；未启动游戏。
+
+## 10. 待验证（不混入确认段）
 
 - `Arg(1)/Arg(2)` 的参数语义（生产代码仅作锚点缺失时的回退，不依赖）。
 - `-2` 重开链路、Esc/右键/联机关闭路径、HeldArtifact 与第一击拦截的实机交互。
