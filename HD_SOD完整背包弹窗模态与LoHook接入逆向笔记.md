@@ -157,3 +157,9 @@
 - 1-based 归一化按“raw 1=头部、raw 6=胸甲、raw 8=右手戒指”归纳：戒指/杂物/机器等**其余位置只做了同构推导**，未经逐项实机对拍；若个别页签仍有一项错位，应按同一表逐值复核（而不是再改一处偏移）。
 - “空槽按下走关闭分支”为**行为级定性**：未在活进程里断到是 `0x039987` 还是 END_DIALOG 路径。若实机仍出现“点某处关窗”，下一步应在 `0x0396AB` 处断下并记录 `command/subtype/itemId`（本模块已把消费前后都打了日志，可直接对读）。
 - 第八轮未实机验证：四类页签归类结果、`BulkButtonDY`（及同节其余键）改 user.ini 后重开弹窗是否立即生效、单击背包装备是否即时入仓、点空格是否不再关窗、“整理”按钮显隐与存储层排序观感、整理后存档/读档是否保持新顺序。
+
+## 16. 滚轮消息的增量载体（2026-10-14 第九轮接线时核对）
+
+- `eMsgCommand::MOUSE_WHEEL (0x20A)` 到达 dialog callback 时，**增量数值在 `H3Msg::subtype`**：原生 `H3Dlg::Notify` 的分发是 `case MOUSE_WHEEL: if (OnMouseWheel(msg.subtype)) break;`（H3API 单头 29088-29091），基类 `H3Dlg::OnMouseWheel(INT direction)` 默认返回 TRUE。
+- 符号约定与 H3Auto `PanelInput.inc.cpp` 的生产实证一致（同一条消息通道）：`subtype > 0` = 上滚（向更早项移动），`subtype < 0` = 下滚；量级（±120 等）与消费方步进无关，只取符号。
+- H3RndNew 仓库页签行据此实现滚轮滚动：仅当光标在页签行内且窗口实际移动时消费该消息（中和为 MOUSE_OVER）；行外/未展开/已到边界透传。`H3DlgItem::TranslateUnprocessedMessage`（H3API 27853-27877）证明控件内滚轮会以 `NotifyParent` 回流 dialog 层，不消费即走原路径——这也解释了为什么“行内滚轮”必须在 dialog 回调层处理。
