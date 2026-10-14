@@ -72,7 +72,20 @@
   3. 普通宝物：名字 = `*[0x660B68] + artifactId*0x20 + 0`（H3 宝物表首字段 name；H3API 对应 `H3Artifact(id,subtype).GetName()`）。
   4. **法术卷轴特例**（`artifactId == 1`）：`wsprintf(buf, "%s. {%s.}", 宝物名, 法术名)`，格式串 RVA `0x142658`；法术名 = `*[0x687FA8] + subtype*0x88 + 0x10`（H3Spell.name，0x88 与 `sizeof(H3Spell)` 一致；H3Auto `SpellRules.inc.cpp` 同写法 `H3Spell**`）。
   5. 更新序列：`状态条->vtable[13](text)`（SetText，槽 13×4=0x34）→ `状态条->vtable[4]()`（Draw）→ **`0x10FAA10(状态条)`**（只刷该 item 屏幕矩形，内部走 `00603190`）。空槽（id 落回 1000..1063）不触发任何更新。
-- **H3RndNew 同构落地**（WarehouseUiStageB）：状态条创建在仓库面板 `(面板原点+8, +505, 389, 18)`（ID 30500，仅日志用——H3DlgText 不参与 `0x5FF9A0` 命中）；悬停用 `GridSlotFromPoint` 定位仓库槽（与原生“坐标现算”同策略），文案走 `FormatStatusHint`（普通=宝物名；卷轴=上款拼接），更新用同一 `SetText→Draw→0x10FAA10` 序列。两条状态条各管各自面板：背包 2000..2063 仍由原生分支更新原生条。
+- **H3RndNew 同构落地**（WarehouseUiStageB）：状态条创建在仓库面板 `(面板原点+8, +505, 389, 18)`（ID 30500，仅日志用——H3DlgText 不参与 `0x5FF9A0` 命中）；悬停用 `GridSlotFromPoint` 定位仓库槽（与原生“坐标现算”同策略），文案走 `FormatStatusHint`（普通=宝物名；卷轴=上款拼接），更新用同一 `SetText→Draw→刷屏` 序列。两条状态条各管各自面板：背包 2000..2063 仍由原生分支更新原生条。
+
+#### ⚠ 地址空间归属（2026-10-14 实机崩溃复盘，写 H3RndNew/插件前必读）
+
+本笔记正文里的绝对地址**分属两个模块**，混用必崩：
+
+| 地址 | 归属 | 插件里怎么用 |
+| --- | --- | --- |
+| `0x5BCB70`（H3DlgTextPcx 构造）、`0x5BC6A0`（H3DlgText 构造）、`0x617492`（operator new）、`0x5FF970`（鼠标命中原生）、`0x5FF9A0`（原生命中测试）、`0x660B68`/`0x687FA8`（宝物/法术表）、`0x642DF8`（H3DlgTextPcx vtable） | **H3.exe 绝对 VA**（全部 `< 0x1000000`） | **直接用绝对地址，绝不加 HD_SOD 基址**。H3API 本身就 `THISCALL_12(H3DlgTextPcx*, 0x5BCB70, …)` 直接调 |
+| `0x10FADB0`（整窗底图工厂）、`0x10FAA10`（悬停后刷屏助手）、`0x1006620`（外框阴影）、`0x113EA2D`（状态条空白默认文案）、`0x1157FB8`（卷轴判别全局）、`0x1039E66`/`0x1039E80`（attach/detach LoHook 点） | **HD_SOD 绝对 VA**（≥ 0x1000000） | 先 `GetModuleHandleW(L"HD_SOD.dll")` 取运行时基址，`RVA = VA - 0x1000000`，调用/取数用 `base + RVA` |
+
+**判别法**：HD_SOD 反汇编地址 `≥ 0x1000000` → 属于 HD_SOD（`RVA = 地址 - 0x1000000`，H3.exe 基址是 0x400000 段、HD_SOD 偏好基址 0x1000000）；地址 `< 0x1000000`（如 `0x5BCB70`、`0x617492`）→ 属于 **H3.exe 本体**，H3API 常量就是这么写的。
+
+**踩坑实例（round-14，仓库界面整块打不开）**：把 `0x5BCB70`/`0x617492` 当 HD_SOD RVA 且加了基址 → 跳到 HD_SOD 别的代码，最终在 `.data` 段执行，`0xC0000005 写入 0xC76ABA00 addr=HD_SOD+0x10FB609`；attach 抛异常中断，`仓库UI: attached` 日志从未出现，仓库面板不创建。修法：**改用 H3API 官方路径**（不自己解析这三个指针）：`H3ObjectAllocator<H3DlgTextPcx>().allocate(1)`（H3API 已证 `sizeof(H3DlgTextPcx)==0x54`，与原生 `new(0x54)` 完全一致，析构归 dialog owned-list）+ `THISCALL_12(0x5BCB70, …)`；悬停更新也走 H3API：`SetText`→`vSetText`(=原生 `vtable[13]`，H3API 注记 `[v34]`)、`Draw`→`vDrawToWindow`(=原生 `vtable[4]`)、`Refresh` 经父对话框刷屏（对应原生 `0x10FAA10` 效果）。**附带的硬约束**：MSVC 不允许在“需要对象展开”（函数里有 std::vector 等局部对象）的函数里用 `__try`（C2712）——含 SEH 的创建逻辑必须拆成独立小函数，否则 `WarehouseUiAttach_` 直接编译不过。
 
 - 字符串表位置：`"Backpack"` RVA 0x1426A4、`"BkPack.pcx"` 0x1426B0、`"def.SpScrArt"` 0x1426BC、`"artifact.def"` 0x1426CC（.rdata）；创建代码在构造函数 `0x039B72..0x39DB5` + 状态条 `0x039DD3`（`H3DlgPcx` 走 `0x01005E40`，文本走 `0x00617492`+thiscall `0x005BC6A0` 即 `H3DlgText`）。
 - **`0x01006620` 不是画底图**：它读 `[0x6992D0]+0x40` 绘制对象，4 次 thiscall `0x0044E2C0`（暗化/阴影条）：右 `(x+w, y+9, 7, h-9)`、`(x+w, y+8, 8, h-8)`、底 `(x+9, y+h, w-2, 7)`、`(x+8, y+h, w, 8)`；stdcall ret 0x10，可被插件直接转发调用（H3RndNew 已在 attach 时同款调用画仓库面板阴影）。
