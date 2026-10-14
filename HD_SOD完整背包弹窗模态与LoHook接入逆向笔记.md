@@ -60,7 +60,19 @@
 | hit item | `(18+col*46, 50+row*46)` | 47×47 | ID `1000+row*8+col`（8×8，步距 46） |
 | DEF 图标 | `(20+col*46, 51+row*46)` | 44×44 | ID `2000+row*8+col`；卷轴 `def.SpScrArt` 帧=subtype（法术ID），普通 `artifact.def` 帧=artifactId |
 | 整窗背景 | `(0, 0)` | 405×459 | RVA `0x039B25` 调 RVA `0x0FADB0`，返回 H3DlgPcx16，DiBoxBck.PCX + dialgbox.def 生成 |
-| 状态条 | `(8, 433)` | 389×18 | H3DlgTextPcx，ID 777，HD_TStat.pcx，默认文案 RVA 0x13EA2D，item 存 `dlg+0x74` |
+| 状态条 | `(8, 433)` | 389×18 | H3DlgTextPcx，ID 777，HD_TStat.pcx，默认文案 RVA 0x13EA2D（**空串**），item 存 `dlg+0x74` |
+
+### 状态条构造 ABI 与悬停文案（2026-10-14 第十四轮，H3RndNew 仓库状态条按此同构）
+
+- **构造（完整码 0x039DFF..0x039E63）**：`new(0x54)`（`0x617492`，cdecl size→ptr）→ **thiscall `0x5BCB70`**，ECX=新对象，栈参数正序 `(x+8, y+433, 389, 18, text, "smalfont.fnt", "HD_TStat.pcx", 1, 777, 5, 0)`；返回对象存入 `dlg+0x74`，并入 dialog owned-list（析构由 `dlg+0x34..0x38` 枚举 + vtable[0](1) 统一完成）。第 8/10/11 个参数（1/5/0）为 HD 内部样式位，**颜色随该构造走**——要“提示文字颜色与背包一致”就必须用同一构造，不要自建 H3DlgText 另配色。
+- **默认文案 RVA 0x13EA2D = 空串**（`.rdata`，读到的第一个字节就是 `\0`）：背包状态条初始无字，悬停才填名字；**悬停离开不清空**（下一次悬停才覆盖）。
+- **悬停分支（callback 0x010396BD..0x010397F9，command==4）逐条**：
+  1. `0x5FF970(dlg, msg.x, msg.y)` 现算命中项 id（**不用 msg 里的 itemId**），要求 `0x7D0 ≤ id < 0x810`（即 2000..2063 的 DEF 覆盖图标）。
+  2. `artifactId = *(hero + 0x1D4 + (id-2000)*8)`（`hero`=`dlg+0x78`；`0x1D4` 即背包记录数组起点，与构造码里的 `[eax+edx*8+0x1d4]` 同源）。
+  3. 普通宝物：名字 = `*[0x660B68] + artifactId*0x20 + 0`（H3 宝物表首字段 name；H3API 对应 `H3Artifact(id,subtype).GetName()`）。
+  4. **法术卷轴特例**（`artifactId == 1`）：`wsprintf(buf, "%s. {%s.}", 宝物名, 法术名)`，格式串 RVA `0x142658`；法术名 = `*[0x687FA8] + subtype*0x88 + 0x10`（H3Spell.name，0x88 与 `sizeof(H3Spell)` 一致；H3Auto `SpellRules.inc.cpp` 同写法 `H3Spell**`）。
+  5. 更新序列：`状态条->vtable[13](text)`（SetText，槽 13×4=0x34）→ `状态条->vtable[4]()`（Draw）→ **`0x10FAA10(状态条)`**（只刷该 item 屏幕矩形，内部走 `00603190`）。空槽（id 落回 1000..1063）不触发任何更新。
+- **H3RndNew 同构落地**（WarehouseUiStageB）：状态条创建在仓库面板 `(面板原点+8, +505, 389, 18)`（ID 30500，仅日志用——H3DlgText 不参与 `0x5FF9A0` 命中）；悬停用 `GridSlotFromPoint` 定位仓库槽（与原生“坐标现算”同策略），文案走 `FormatStatusHint`（普通=宝物名；卷轴=上款拼接），更新用同一 `SetText→Draw→0x10FAA10` 序列。两条状态条各管各自面板：背包 2000..2063 仍由原生分支更新原生条。
 
 - 字符串表位置：`"Backpack"` RVA 0x1426A4、`"BkPack.pcx"` 0x1426B0、`"def.SpScrArt"` 0x1426BC、`"artifact.def"` 0x1426CC（.rdata）；创建代码在构造函数 `0x039B72..0x39DB5` + 状态条 `0x039DD3`（`H3DlgPcx` 走 `0x01005E40`，文本走 `0x00617492`+thiscall `0x005BC6A0` 即 `H3DlgText`）。
 - **`0x01006620` 不是画底图**：它读 `[0x6992D0]+0x40` 绘制对象，4 次 thiscall `0x0044E2C0`（暗化/阴影条）：右 `(x+w, y+9, 7, h-9)`、`(x+w, y+8, 8, h-8)`、底 `(x+9, y+h, w-2, 7)`、`(x+8, y+h, w, 8)`；stdcall ret 0x10，可被插件直接转发调用（H3RndNew 已在 attach 时同款调用画仓库面板阴影）。
