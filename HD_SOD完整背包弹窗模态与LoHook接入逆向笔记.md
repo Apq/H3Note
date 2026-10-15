@@ -430,3 +430,37 @@ if (file == INVALID_HANDLE_VALUE) {
 
 **踩坑**：目录归属要先问清"同级"是相对谁——第一版做成了 `whui\pcx\`、`whui\png\`（理解成"在 whui 里面按后缀分目录"），被用户纠正为"仓库根"。这类结构改动的第一次尝试前，先用一句话把目标结构复述确认，比事后返工便宜。
 
+---
+
+## 22. 随身空间分页行右端「打包日志」按钮（2026-10-15 round-25）
+
+**用户裁定（原话）**：「在背包界面 的右侧,添加一个打包日志的按钮,功能参考"D:\GitHub\H3\H3BattleStore"项目中的打包日志按钮」。
+
+### 22.1 参考件（H3BattleStore）拆到什么程度
+
+`H3BattleStore\modules\BattleUi.inc.cpp:1372 UiPackLogs_()` 是**功能**参考的全部：
+①`static DWORD lastPack` + `static bool packing` 双闸（1 秒去抖 + 重入闸，MessageBox 泵消息期间的重入不会重复打包）；②`GuardFlushFaults_("log-feedback", true)` + `LogRecentContext_("log-feedback")` 前置（把崩溃取证上下文也冲进包里）；③`PackRecentLogs_(nullptr, 0, reason, sizeof(reason))`（`nullptr` 合法——H3Space 的 LogPack 同款，内部落 internal_path）；④成功 `MessageBoxW(kLogPackSuccess_)`、失败 `MessageBoxW(reason)`。
+它的**绘制**（font->TextDraw + DrawFrame，自绘悬浮条 x=392/宽84）**不照搬**——H3Space 是对话框件体系，两类 UI 不可互换。
+
+### 22.2 H3Space 落点与几何（右侧 = 分页行右端）
+
+- 落位：分页行（整理按钮所在行）右端、贴右 18px（`kPagerRightInset`），与「整理」左右对称——这正是 H3BattleStore「按钮贴条右缘」约定的同构位置。
+- 常量（`WarehouseUiFlow.hpp`）：`kPackLogButtonWidth=72`（四个中文字，同整理按钮 18px/字）；`PackLogButtonX(panelWidth)=panelWidth-18-72` → 405 面板上 **x=315**；`kPagerNumbersRightLimit(panelWidth)=panelWidth-18-72-4`。
+- **代价**：页码区从 [58,387) 329px 缩到 [58,311) 253px，`kPagerMaxButtons` **10→8**（8*28+7*4=252，起点贴 58）。全部数组/循环（`g_wh_ui_pagers_`、`pagerText`、创建与刷新循环）都以常量为界自动跟随。
+- 按钮：**无 PCX 素材**，直接 `H3DlgCaptionButton::Create(..., 30053, "", GBK"打包日志", "smallfont.fnt", ...)`——同一键取出/放入的降级路径；中文小字体在本作中文版可用（原生状态条同源）。
+- ID：面板局部 `kWhUiPackLogId_=30053` + 头文件 `warehouseui::kWhUiPackLogButtonId=30053`（**static_assert 互锁**防走偏）；进 `IsWarehouseControlId` 白名单（DOWN 被吞、`UsesGeometryFallback` 让位），但**不进** `ButtonIndexFromId` 五按钮数组（无 PCX 视觉对，不吃 round-19/20 的自维护按压管线）。
+- 消息流：caption 按钮原生状态机在抬起时合成 0xD(CLICK)+itemId → `WarehouseUiHandle_` 的 CLICK 段新增 `id == kWhUiPackLogId_` 分支 → `WarehouseUiPackLogs_()`（与 §22.1 同构 + `outPath` 落日志）。收起层无此命中项（`AddPanelItem` 默认 HideDeactivate，展开统一 ShowActivate），故无需 expanded 判定。
+
+### 22.3 坐标系与铠甲边界（没动的部分）
+
+- 未改任何钩子入口：`WarehouseUiPackLogs_` 运行在既有 `Callback` 的 `__try(GUARD_WH_UI_POST_COMMON)` 内，原版 callback 仍在铠甲外恰好一次；函数体只放 POD 局部。
+- `MessageBoxW` 从对话框回调里弹（H3BattleStore 生产同款模式）：泵消息期间对话框可能再收消息——`packing` 重入闸兜住；`WarehouseUiNeutralizeMessage_` 语义未动。
+- GBK「打包日志」= `B4 F2 B0 FC C8 D5 D6 BE`（打=B4F2 包=B0FC 日=C8D5 志=D6BE，PowerShell 936 编码实测）。
+
+### 22.4 验证
+
+- `build_and_deploy.bat` 0 警告 0 错误；18 套单测全绿（`warehouse UI flow` 227→**230 checks**：新增 round-25 三断言——贴右几何、页码/按钮永重叠（`numbersEnd ≤ PackLogButtonX-4`）、30053 进白名单且 30054 不进）；round-12 断言同步 10→8（`CenteredPagerNumbersX(405,8,28,4)==58`）。
+- **证伪**：临时把白名单条目改成 `id == kWhUiPackLogButtonId && id != kWhUiPackLogButtonId` → 恰好红 `round-25 pack-log button id joins the warehouse control whitelist`（1/230 failed）→ 还原 → 全绿。部署 DLL 与 `Release\H3Space.dll` 同哈希 `C76B31F8…`。
+- 实机（用户执行）：展开随身空间层，点右下角「打包日志」→ 应弹「日志已打包」窗，且 `.7z` 路径已在剪贴板（可直接粘贴到聊天框）；连点不重复打包；分页行右侧 8 个页码仍可点。
+
+
