@@ -90,3 +90,66 @@
 2. **源适配器里的 `::Foo()` 全局限定 → C2039**：`::ResetPanelDrafts();` 原本表示「调全局自由函数」，
    移植后自由函数已在子命名空间内 → 改 `autoassist::ResetPanelDrafts();`；**不能裸调用**，同名成员
    函数在场时会自我递归。
+
+## 7. 素材目录 `img\` → `pcx\`（2026-10-15 晚，全链路改名）
+
+用户裁定素材目录名应为 `pcx`（与 `H3MegaDesc` 的 `pcx\`、同日 `H3Space` 的 `pcx\`/`png\` 同规）。
+改名本身不是重构，但**漏一处就是游戏里整块无图**（素材是运行期按文件名加载，不是编译期嵌入），
+所以按引用点清单逐条过。
+
+### 7.1 运行期路径构造（只有两处）
+
+```cpp
+// 宿主悬浮条底图（modules\BattleUi.inc.cpp 的 UiLoadBg_）
+wchar_t* slash = wcsrchr(wpath, L'\\');              // wpath = <DLL目录>\<相对路径>
+const size_t dllDirLen = (size_t)(slash + 1 - wpath);
+if (_wfopen_s(&file, wpath, L"rb") != 0 || !file) {   // 调用方传 L"pcx\\HB_bg.pcx"
+    const wchar_t* base = wcsrchr(filename, L'\\');   // 兜底：目录段换成 img\ 再试一次
+    base = base ? base + 1 : filename;
+    if (swprintf_s(wpath + dllDirLen, pathCap - dllDirLen, L"img\\%ls", base) > 0
+        && _wfopen_s(&file, wpath, L"rb") == 0 && file) { /* LogInfo 只一次 */ }
+}
+
+// 打铁面板素材（modules\PanelGfx.inc.cpp 的 LoadPanelPcx24_）
+strcpy_s(slash + 1, remaining, "pcx\\");   // 主路径
+strcat_s(path, kPathCap_, asset_name);
+...
+strcpy_s(slash + 1, remaining, "img\\");   // 打开失败后旧布局兜底
+```
+
+- 路径缓冲一律堆分配（`kPathCap_`，宽字符 `kPathCap_/2`）——面板绘制跑游戏线程，栈放不下 4MB。
+- 兜底各用 `static bool` → `LogInfo` 只提示一次，避免 9 个素材刷屏。
+- 兜底语义：老安装目录没改组时不至于面板整块无图/悬浮条无底图，**不是**版本兼容。
+
+### 7.2 同步清单（缺一即出事）
+
+| 类别 | 位置 | 改动 |
+|---|---|---|
+| 仓库目录 | `H3BattleStore\img\` → `pcx\` | `git mv`（10 个 `.pcx`，`git status` 显示 `R` 100%，历史保留） |
+| 加载路径 | `modules\BattleUi.inc.cpp`、`modules\PanelGfx.inc.cpp` | `pcx\` 为主 + `img\` 兜底 |
+| 部署 | `deploy.ps1` | `$pcxDst`、源 `pcx\HB_bg.pcx` 与 `pcx\HA_*.pcx` |
+| 打包 | `pack.ps1` | 10 条 entry 的 `热血插件/pcx/…` 与 Local `pcx\` |
+| 生成脚本 | `scripts\make_hb_bg.py` | TARGET `pcx\HB_bg.pcx`；SOURCE 由已消失的 `H3Auto\img\HA_bg.pcx` 改本仓库 `pcx\HA_bg.pcx` |
+| 文档 | `README.md`、`使用说明.txt`、`docs\11`（§3.3/§7.4/§7.5/§9-7）、`docs\变更记录.md` | 当前口径改 `pcx\`；**历史条目照原样保留**（不改写历史） |
+
+### 7.3 本次验收证据
+
+- 默认与 `H3BS_UI_NULL=1` 两变体构建 exit 0、**0 错误 0 警告**；六组 Catch2 单测 exit 0。
+- 默认 `Release\H3BattleStore.dll` **728576 B** SHA256 `E205828B0BC7560FCD1847D14E39D7D422441FE13406DAF8E95FCDA7E3B30B2F`
+  （比改名前 727552 B 多 1024 B，即兜底代码），NULL `Release\null\H3BattleStore.dll` 396800 B SHA256 `FCAC84AD…`。
+- DLL 字节标记：UTF-16LE `pcx\HB_bg.pcx`=1、`img\%ls`=1（仅兜底）；ASCII `pcx\`=3、`img\`=3
+  （2 处字面量 + 1 条日志文案，逐处可解释）。**这类路径必须 ASCII 与 UTF-16LE 双向检索**：
+  宽字符串字面量在 ASCII 检索里是假阴性（本仓库早前 `HB_bg.pcx` 审计踩过）。
+- `deploy.bat` exit 0：`Packs\热血插件\pcx\` 10 个文件与仓库源**逐一哈希相同**，
+  `H3BattleStore.dll`/`使用说明.txt`/`H3BattleStore.default.ini`/`lang\zh-CN.ini` 与仓库源一致。
+- 游戏目录里旧 `img\` 不会自己消失（`Copy-Item` 只增不删），加载器优先 `pcx\`，残留无害；
+  删除属破坏性操作，**先问用户**。
+- 提交：H3BattleStore `0d9d67f`（已推送）。
+
+### 7.4 两个坑
+
+1. **`edit` 工具重写 `.ps1` 会吃掉 UTF-8 BOM**（`deploy.ps1`、`pack.ps1` 本次都中招）。无 BOM 时
+   PowerShell 5.1 按 ANSI 读中文路径 → 部署可能建出乱码目录。改完必须复核前三字节 `EF BB BF` 并补回。
+2. **包内 entry 路径与部署布局要同时改**，否则发出的 zip 与 DLL 查找路径不匹配。已发出的旧包
+   （`Release\战场存档_v0.15.zip`，包内 `热血插件/img/...`）不重打包就与新版 DLL 不配套——能靠兜底显示，
+   但会在玩家目录多留一个失效目录。版本号由用户手动维护，agent 不自行 bump、不自行打包。
