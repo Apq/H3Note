@@ -78,6 +78,15 @@
 - 版本门卫：SoD 数据指纹不符时**不挂任何钩子**（含移植钩子），只保留日志；移植钩子注册在门卫之后。
 - 打包日志（LogPack）**不在合并范围**：宿主 `LogPack.inc.cpp` 是唯一属主；源插件帮助页的「打包日志」
   按钮与其 7 个 `help.pack_*` 文案键已删除（与宿主悬浮条第一行原有的打包按钮是两回事，后者保留）。
+- **打包份数（2026-10-16 用户裁定）**：「改成只限前缀,不限数量」——`LogPackCollectRecent_(out, max_count)`
+  （内含 `LogPackEntry all[64]` 上限、只取最近 5 份）改为 `LogPackCollectLogs_(LogPackEntry** out)`：筛选条件只有
+  「文件名前缀 = 日志器同源基名 `<基名>_*.log`」（与 H3Auto 等同目录插件互不混入），**份数不限**，收集数组按需
+  2 倍扩容（扩容失败就带走已收到的，不假装收全），仍按写入时间降序。组包侧固定数组
+  `entries[6]/datas[6]/packs[6]/pack_lens[6]/unpack_sizes[6]/crcs[6]` 改成 `nLogs + 1` 项堆数组（多一项给
+  `00_说明.txt`），成功与 `bail` 两条清理路径统一按 `nItems` 释放；压缩成功后立即释放原文件字节（30 份 × 数 MB
+  会吃满 32 位进程地址空间）。说明文件文案改为「包含全部 %d 份日志（不限份数，按文件名前缀收集）」，单测夹具
+  由「5 份」改为「7 份全进包」。**H3Space 同口径已于 2026-10-15 改过**，但其组包侧直接写 `logs[nLogs]`（说明项）
+  而收集器只保证 `total` 项，份数正好等于其扩容容量时越界——本插件移植版单独开 `nLogs + 1` 数组规避。
 - 帮助页的**日志级别下拉**于 2026-10-16 按用户裁定移除（同样因为宿主已有：战场存档界面悬浮条第一行的
   日志等级单选列表，点选即写 `[Logging] MinLevel`）；删除范围＝`PanelDraw` 的 `GetHelpLogLevel*` 系列
   + `HELP_DD_*` + `HelpLogLevelOptKey_`、`PanelDraw.hpp` 的两条声明、`SettingsDlg` 的 `s_help_log_dd_open`
