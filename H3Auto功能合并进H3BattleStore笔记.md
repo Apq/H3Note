@@ -78,6 +78,12 @@
 - 版本门卫：SoD 数据指纹不符时**不挂任何钩子**（含移植钩子），只保留日志；移植钩子注册在门卫之后。
 - 打包日志（LogPack）**不在合并范围**：宿主 `LogPack.inc.cpp` 是唯一属主；源插件帮助页的「打包日志」
   按钮与其 7 个 `help.pack_*` 文案键已删除（与宿主悬浮条第一行原有的打包按钮是两回事，后者保留）。
+- 帮助页的**日志级别下拉**于 2026-10-16 按用户裁定移除（同样因为宿主已有：战场存档界面悬浮条第一行的
+  日志等级单选列表，点选即写 `[Logging] MinLevel`）；删除范围＝`PanelDraw` 的 `GetHelpLogLevel*` 系列
+  + `HELP_DD_*` + `HelpLogLevelOptKey_`、`PanelDraw.hpp` 的两条声明、`SettingsDlg` 的 `s_help_log_dd_open`
+  与两个点击分支、双侧 `help.log_level_*` 六个文案键；模态高度 440 → 404，开源地址行上移到原下拉行位置。
+- 帮助页开源地址（显示 + 点击复制载荷）2026-10-16 起指向 **`https://github.com/Apq/H3BattleStore.git`**
+  （原 `https://github.com/Apq/H3Auto`），改的是 `help.link`/`help.link_flash`/`help.link_url` 三个键。
 - 面板/自动化素材与文案：`img\HA_*.pcx`（9 个）、`lang\zh-CN.ini`；方案库走 JSON **v7**，路径
   `<游戏根>\Games\<地图名>\Auto\<16位hex>.json`（回退 `Games\Auto` → DLL 同目录），LRU 保留 30 场。
   注意源插件文档里的「JSON v5」是过时说法。
