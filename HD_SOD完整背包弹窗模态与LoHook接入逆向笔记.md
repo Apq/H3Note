@@ -395,7 +395,7 @@ static int __stdcall OnWhStartGame_(HiHook* hook, int self)
 
 **用户裁定（原话）**：「这个目录里面我看全是资源啊，应该按文件后缀名建立文件夹（同级）pcx png」→ 澄清「不是在 img 下分目录，是仓库根 pcx\ / png」。
 
-即：素材不再放单一平铺目录，而是**与仓库同级、按后缀建目录**——`pcx\`（50 个界面贴图）+ `png\`（预览图），与既有 `img\`（预留占位）同级同约定；空掉的 `whui\` 目录删除。
+即：素材不再放单一平铺目录，而是**与仓库同级、按后缀建目录**——`pcx\`（50 个界面贴图）+ `png\`（预览图），对齐 `H3Auto功能合并进H3BattleStore笔记.md` §7 的同一约定；空掉的 `whui\` 目录删除。用户随后删掉 `img\`（保留占位的目录也不需要），仓库里与 deploy/pack/README/docs 的 `img` 引用一并清掉。
 
 ### 21.1 运行期路径（这是改结构的真正代价）
 
@@ -424,7 +424,7 @@ if (file == INVALID_HANDLE_VALUE) {
 | `README.md` / `使用说明.txt` / `docs\骨架模块说明.md` | 目录树与素材位置描述 |
 | `WarehouseUiPanel.inc.cpp` 注释 | "烘焙进 whui/btn_open0..3.pcx" → `pcx/` |
 
-`git mv` 保证 51 个文件都识别为 **rename（100% 相似）**，历史不丢。顺带修掉一处**先行提交的意外删除**：上一轮 `git add -A` 把 `img\.gitkeep` 的磁盘缺失一起提交了，本轮 `git checkout --` 恢复（`img\` 按 README 记载保留为空占位）。
+`git mv` 保证 51 个文件都识别为 **rename（100% 相似）**，历史不丢。顺带修掉一处**先行提交的意外删除**：上一轮 `git add -A` 把 `img\.gitkeep` 的磁盘缺失一起提交了；该占位随后按用户要求（`img\` 目录不需要延续）连同 `deploy.ps1`/`pack.ps1` 的整块素材处理、README 目录树、`docs\骨架模块说明.md` 的"`img\` 为空占位"描述一并移除。
 
 验收：`build_and_deploy.bat` 0 警告 0 错误；17 套单测全绿（`PASS warehouse UI PCX: 50 assets …` 即从新目录读到全部 50 个）；部署目录出现 `pcx\`（50）与 `png\`（1），部署 DLL 与 `Release\H3Space.dll` 同哈希 `773755AE…`。游戏目录里上次部署留下的旧 `whui\`（51 个）未删——加载器优先取 `pcx\`，旧目录已失效但无害。
 
