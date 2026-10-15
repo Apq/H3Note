@@ -193,3 +193,15 @@ enum eBattleAction:
 - **控件**: 每格一个下拉框（5个策略选项）
 - **关闭按钮**: 右上角，ID 待定
 - **渲染方式**: 参考 BattleValueInfo 的 `_Pcx16_` + GDI BitBlt 架构
+
+---
+
+## 7. 实现落位（2026-10-15 界面与功能分离后）
+
+上面第 6 节是早期实现规划；实际代码经「界面与功能分离」重构（H3Auto `docs/13-界面与功能分离.md`）后，位置如下，逆向/调试时按此定位：
+
+- **界面实现**：`H3Auto/modules/SettingsDlg.inc.cpp`（面板状态 `s_p`、网格、滚动条、拾取）+ `PanelInput`（输入捕获）+ `PanelDraw`（Tab/帮助/tips）+ `CellControl`（卡片控件）+ `PanelGfx`（PCX 资源）；整套经 `IH3AutoUi` 契约（`modules/AutoUiPort.hpp`、宿主 `g_uiPort`）挂到功能层。
+- **战斗生命周期事件源**（**不在** SettingsDlg 里了）：`H3Auto/modules/BattleLifecycle.inc.cpp`。本笔记第 5 节涉及的对话窗判定（战斗窗虚表 `0x0063D528`、右键说明框 `0x0063DB40`、结果窗 `0x0063D46C`、自动战斗按钮 id `0x7D4`、结果窗确定 `0x7802` / 取消重打 `0x1FB`）在该文件内维护；`FindDialogByVtable_`（对话链 `nextDialog` 在 +0x08）与 `GetBattleItemUnderCursor_` 也统一在此定义。
+- **游戏全局指针垫片**：`o_WndMgr = *(H3WindowManager**)0x6992D0`、`o_DDSurfaceBackBuffer = *(LPDIRECTDRAWSURFACE*)0x6AAD28`，现定义在 `modules/Compat.inc.cpp`（原来在 PanelGfx）。
+- **无界面编译变体**：定义 `H3AUTO_UI_NULL` 时跳过全部界面实现包含（诊断用，不进玩家包）。
+
