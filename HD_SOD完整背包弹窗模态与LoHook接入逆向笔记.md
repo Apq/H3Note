@@ -254,3 +254,51 @@
 - 连写要先消解再泛替，避免双写：括注形式、`随身空间+旧名`、`随身+旧名`、`156 旧名` 各一条规则排在泛替之前。
 - 验证四连：① 残留扫描（期望只剩 repository 义那几处）；② GBK 文件按字节查（`.bat`/`.rc` 是 GBK，只按 UTF-8 扫会漏）；③ 伪影扫描（连续重复、括号套括号）；④ 编码体检（`.ps1` 带 BOM、`.md/.cpp/.txt/.ini` 不带 BOM、无裸 LF）。
 - 副作用：改到了代码注释与日志串 → 必须重编重部署（新 DLL 哈希 `9E21F056…`，四套单测全绿）；被笔记链接的文件名也要跟着改，否则链接断掉——本次把 `H3RndNew/docs` 两个被引用的文档同步改名并修好其内部链接与标题。
+
+## 19. 第十二轮（2026-10-15）：随身空间"战斗后丢失"的根因——无附件档被显式清空
+
+玩家反馈「随身空间内的东西，在战斗后会丢失」。**无日志，纯代码定案**（用户明确要求），结论：**确有此 BUG，已修复**。
+
+### 19.1 为什么"战斗"能碰到随身空间的存储
+
+随身空间插件**没有任何战斗钩子**（`CrashFix` 只补 0x466710/0x43E790/0x43E720 三个战斗崩溃点，`SaveLoadEnhance` 只挂 0x4BEB60）。物品丢失只能经由**内存态被清/被替换**，而 `g_warehouse_` 在整个插件里只有两条清空路径：
+
+| 清空路径 | 触发条件 | 判定 |
+|---|---|---|
+| `OnWhStartGame_`（`WarehouseStore.inc.cpp`） | `g_scenario_context_ == kScenarioNewGame_` 时对 0x58BFB0 建档入口调 `ClearForNewGame` | **正确**：上下文由场景对话框（ctor + 每条消息前）观察、`ClassifyScenarioContext_(+0x64!=0, +0x65!=0)` 两者皆 0 才算新局；`OnStartGame_`（真随机段）每次建档都 `ConsumeScenarioContext_()`，上下文不会陈旧 |
+| `WhAfterLoad_` 的 `NoAttachmentLegacyUnknown` 分支 | 读档时档里**没有**随身空间附件块 | **缺陷**：无条件 `ClearForNewGame`，清空全部 156 个随身空间 |
+
+战斗本身不动存储；**战斗前后必然发生的存档/读档**才是触发器（战前存档、战败读档、重打读档、自动存档）。
+
+### 19.2 根因：「档里没有随身空间块」是歧义，不是"确认旧档"
+
+旧实现的注释自称"门禁全绿仍无自有块 = 确认从未有过随身空间块的原生档"，这个推理**不成立**——`ValidateObservation` 只证明"这次捕获是可信的"，完全不能证明"这个档从来没有过附件"。无附件至少有四类来源：
+
+1. 真正从未有过随身空间的旧档；
+2. **本次存档没能附加**——`WhAfterSave_` 有六条 fail-closed 早退（原生存档未成功 / 处于锁定态 / 未捕获到实际路径 / 读取已保存文件失败 / 原生 gzip 边界不可信 / `PlanSave` 策略拒绝或写失败），每条都让那一次存档**不带附件**；
+3. **锁定态下所有存档一律不附加**（`g_wh_locked_` 在读到非法附件后置位，直到下次成功读档或新局才解除）→ 形成一个自锁环：一次坏档 → 后续每一档都无附件；
+4. 附件被第三方工具裁掉，或原子替换（临时文件 + `MoveFileExA`）中断。
+
+其中 2/3/4 之后再读档，旧实现就把玩家现有物品**全部清空**——不可恢复。真旧档下清空无害（内存本来就空），这正是它一直没被当成 bug 的原因。
+
+**更关键的是它违反了自己纯层的契约**：`WarehouseStore.hpp` 对 `NoAttachment` 写得很清楚——"A missing attachment has two possible meanings (legacy save or lost/cut attachment). This policy never clears/replaces State for that ambiguous case. The adapter/application must make an explicit, user-visible legacy decision." 适配层却静默清空，等于把歧义一律判成旧档。
+
+### 19.3 修复（round-23）
+
+`WhAfterLoad_` 的该分支改为**保留内存内容**：不再调 `ClearForNewGame`，仍解除锁定（让下一次存档把保留下来的内容重新写回，数据在磁盘上续存），日志改为「该档无随身空间块（歧义：旧档或本次未附加），保留当前随身空间内容不清空（保留 N 件，已解除锁定）」。
+
+- 真旧档：内存本空，效果与清空**完全等价**（不会凭空长出物品）；
+- 无附件但内存有物品：不再丢，且下一次存档即把它写回。
+
+### 19.4 验证（离线，无需游戏）
+
+`tests\hook_abi_test.cpp` 的随身空间段用 mock 钩子 + 真实临时文件驱动生产 `OnSaveGame_`/`OnLoadGame_`/`OnStreamOpen_`/`OnStreamClose_`，新增第 4 段：
+
+- 先制造"已锁定 + 状态非空"，把文件重写成**只有原生 gzip、无附件**的夹具，再走一次读档；
+- 断言：仍保留 2 件记录、锁定被解除、紧接着的一次存档把 `H3WHBGN1` 重新附加。
+
+**证伪实验**（确认测试抓的是真根因，不是假测试）：把该分支临时改回 `ClearForNewGame` 后重编重跑 → `FAIL hook ABI: no-attachment save never clears the live warehouse (round-23 data-loss fix)`；还原修复后全绿。
+
+**坑**：存档前必须把 mock 流模式设回 `"wb"`（`g_wh_test_mode_`）。读档用例留下的 `"rb"` 会让捕获窗口匹配不到写模式 → `WhAfterSave_` 走"未捕获实际路径"fail-closed → 不附加，测试会误报在"重新附加"那条断言上。
+
+回归：`build_and_deploy.bat` 0 警告 0 错误；16 套单测全绿（含 `PASS warehouse hooks: …`）；部署 DLL 与 `Release\H3Space.dll` 同哈希 `93892863…C6F9865`。游戏内验证由玩家执行。文档同步：`README.md`、`docs\骨架模块说明.md`。
