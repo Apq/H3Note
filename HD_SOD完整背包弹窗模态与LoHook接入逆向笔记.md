@@ -211,7 +211,7 @@
 
 | 可见文案 | 真正来源 | 改法 |
 |---|---|---|
-| 背包界面左上角打开按钮上的字 | **烘焙在素材里**：`whui/btn_open0..3.pcx`（66×32 四态，24 位真彩 PCX = 3 plane，非 8bit 调色板） | 必须重出那 4 张图；只改 C++ 常量在正常路径**看不到任何变化** |
+| 背包界面左上角打开按钮上的字 | **烘焙在素材里**：`pcx/btn_open0..3.pcx`（66×32 四态，24 位真彩 PCX = 3 plane，非 8bit 调色板） | 必须重出那 4 张图；只改 C++ 常量在正常路径**看不到任何变化** |
 | 随身空间面板顶部标题（405×30，bigfont.fnt REGULAR 居中） | 代码里的 GBK 常量 `kWhUiGbkWarehouse_`（`WarehouseUiPanel.inc.cpp`），创建 `H3DlgText` | 改常量字节即可 |
 | 打开按钮的**降级** caption（素材不可用时的兜底 `H3DlgCaptionButton`） | 同一个 `kWhUiGbkWarehouse_` | 同上 |
 
@@ -219,7 +219,7 @@
 
 ### 18.1 按钮素材的出图方法（沿用原生成器，不重新设计）
 
-生成器：`H3RndNew\scripts\make_whui_assets.py`（H3Space 的 `whui/` 素材即其产物，整体搬迁而来）。关键约束：
+生成器：`H3RndNew\scripts\make_whui_assets.py`（H3Space 的素材即其产物，整体搬迁而来；2026-10-15 起由平铺 `whui/` 改为仓库根 `pcx/`（贴图）与 `png/`（预览图），生成器输出目录需同步）。关键约束：
 
 - **底图**：从 `H3BattleStore\img\HA_bg.pcx`（680×548）图形**正中直裁 66×32**（left=307 top=258），不平铺、不缩放。实测该 66×32 与 `H3RndNew\whui_src\HA_bg_crop.pcx` **逐像素相同**——即用户所说的“从 HA_bg.pcx 中间截取”就是既有做法本身。小尺寸控件（36×22/28×22/24×24/18×22）再从这 66×32 正中二次直裁。
 - **四态** = 同一底图 × `STATE_TINT`（normal 1.0 / pressed 0.845 / highlight 1.35 / disabled 0.853）+ 墨色 `INK_*` + 按压态文字下移 1px（`dy=1`）。
@@ -388,3 +388,45 @@ static int __stdcall OnWhStartGame_(HiHook* hook, int self)
 3. 第 4 段（无附件档兜底不清空 + 下次存档重新附加）保留；证伪实验记录见 §19.4。
 
 回归：`build_and_deploy.bat` 0 警告 0 错误；17 套单测全绿；部署 DLL 与 `Release\H3Space.dll` 同哈希 `AA79187F…`。游戏内验证由玩家执行。
+
+---
+
+## 21. 素材目录调整：`whui\` 平铺 → 仓库根 `pcx\` / `png\`（2026-10-15）
+
+**用户裁定（原话）**：「这个目录里面我看全是资源啊，应该按文件后缀名建立文件夹（同级）pcx png」→ 澄清「不是在 img 下分目录，是仓库根 pcx\ / png」。
+
+即：素材不再放单一平铺目录，而是**与仓库同级、按后缀建目录**——`pcx\`（50 个界面贴图）+ `png\`（预览图），与既有 `img\`（预留占位）同级同约定；空掉的 `whui\` 目录删除。
+
+### 21.1 运行期路径（这是改结构的真正代价）
+
+`WarehouseUiButtons.inc.cpp` 的 `WarehouseUiLoadOne_` 用 `GetModuleFileNameW` 取 DLL 目录后拼素材名，原为 `whui\<文件名>`：
+
+```cpp
+// 素材在仓库根按后缀分目录（pcx\btn_open0.pcx），部署时同结构复制到插件目录下。
+if (swprintf_s(path + used, cap - used, L"pcx\\%hs", filename) <= 0) { ... }
+HANDLE file = CreateFileW(path, ...);
+if (file == INVALID_HANDLE_VALUE) {
+    // 兼容旧版布局（whui\btn_open0.pcx）：老安装目录没跟着改组时不至于整屏无图。
+    if (swprintf_s(path + used, cap - used, L"whui\\%hs", filename) > 0) { ... 命中时记一条 LogInfo ... }
+}
+```
+
+要点：素材是**按文件名运行时加载**（不是编译期资源），所以目录结构一变，代码、部署脚本、打包脚本、测试数据路径必须同步改，否则界面整屏无图（只留 `LogError("随身空间UI: PCX加载失败 %s")`）。加了旧布局兜底，玩家目录未改组时不至于瞎眼。
+
+### 21.2 同步清单（同类改动照抄）
+
+| 位置 | 改动 |
+|---|---|
+| `modules\WarehouseUiButtons.inc.cpp` | 主路径 `pcx\`，旧 `whui\` 兜底 |
+| `tests\warehouse_ui_pcx_test.cpp` | 读 `pcx/<名>`（测试在仓库根运行，`Push-Location $root`，相对路径即仓库根） |
+| `deploy.ps1` | 由整树复制 `whui\` 改为遍历 `pcx`、`png` 两目录整树复制（产物落到 `Packs\随身空间\pcx|png\`） |
+| `pack.ps1` | 包内路径 `随身空间/pcx/…`、`随身空间/png/…` |
+| `README.md` / `使用说明.txt` / `docs\骨架模块说明.md` | 目录树与素材位置描述 |
+| `WarehouseUiPanel.inc.cpp` 注释 | "烘焙进 whui/btn_open0..3.pcx" → `pcx/` |
+
+`git mv` 保证 51 个文件都识别为 **rename（100% 相似）**，历史不丢。顺带修掉一处**先行提交的意外删除**：上一轮 `git add -A` 把 `img\.gitkeep` 的磁盘缺失一起提交了，本轮 `git checkout --` 恢复（`img\` 按 README 记载保留为空占位）。
+
+验收：`build_and_deploy.bat` 0 警告 0 错误；17 套单测全绿（`PASS warehouse UI PCX: 50 assets …` 即从新目录读到全部 50 个）；部署目录出现 `pcx\`（50）与 `png\`（1），部署 DLL 与 `Release\H3Space.dll` 同哈希 `773755AE…`。游戏目录里上次部署留下的旧 `whui\`（51 个）未删——加载器优先取 `pcx\`，旧目录已失效但无害。
+
+**踩坑**：目录归属要先问清"同级"是相对谁——第一版做成了 `whui\pcx\`、`whui\png\`（理解成"在 whui 里面按后缀分目录"），被用户纠正为"仓库根"。这类结构改动的第一次尝试前，先用一句话把目标结构复述确认，比事后返工便宜。
+
