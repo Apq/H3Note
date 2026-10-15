@@ -439,3 +439,33 @@ HD Mod 的 LoHook 在**函数边界**（标准 prologue: push ebp; mov ebp,esp�
 注意 `numSquares` 不在条目首 DWORD（首 DWORD 高位 WORD 是 0x0103/0x0104 类型号）；`+0x04` 起的相对格是**有符号字节**，0xF0=-16、0xDE=-34，与运行时读取结论一致。
 
 用途：H3Auto `CrashGuard` 版本门卫（`GuardVerifySodBytes_`）以此作为 SoD 数据指纹——完整版/HotA/改版 exe 不可能同时吻合两表的计数值、负偏移与 "C15sp" DEF 前缀；不吻合时不挂任何钩子，防偏移错配崩溃。
+
+---
+
+# 归属裁定与并入「热血插件」（2026-10-15，已实施）
+
+## 用户裁定
+
+**战斗类修复统一随 H3BattleStore（「热血插件」）走**；随身空间（H3Space）保持纯仓库/读档/随机职能，同日移除该功能。背景：当天早些时候本功能曾被并入 H3Space 阶段一（`2c12c84`），属误放，同日整体迁出（H3Space 侧 `H3Space.cpp` 去掉 `namespace crashfix` 包含点、`modules/Entry.inc.cpp` 去掉调用、`git rm modules/CrashFix.inc.cpp`、default.ini 去掉 `[CrashFix]` 节、5 个单测用例改迁宿主）。
+
+## 并入形态（三处，均在 H3BattleStore）
+
+| 位置 | 内容 |
+|---|---|
+| `modules\CrashFix.inc.cpp`（新，扁平无 namespace 包裹） | 三个 `SPLICE_ + EXTENDED_` 防崩 HiHook + `IsProbablyReadableDword`/`IsValidObstacle` + `ReadConfig_`/`StartHooks_`；地址、偏移（`OFS_TYPE=0x34`、`OFS_SIDE=0xF4`、`OFS_ACTIVE_SPELLS_DURATION=0x198`、障碍向量 `+0x13D5C/+0x13D60`、元素 `0x18`、def `+0x00`、duration `+0x10`）、法术号（丧心病狂 59 / 蛊惑 60）、`__try` 铠甲语义、`[障碍]/[光环]/[阻止清理]` 日志标签逐字保留 |
+| `H3BattleStore.cpp:109` | `namespace crashfix { #include "modules/CrashFix.inc.cpp" }`（`namespace autoassist` 之后、`BattleUiPort.hpp` 之前；MSVC 同块后续查找坑的老规避法） |
+| `modules\Entry.inc.cpp:1006-1007` | `crashfix::ReadConfig_(); crashfix::StartHooks_();`（`GuardVerifySodBytes_()` 门卫与 `autoassist::AutoInstallHooks_()` 之后：指纹不符时一个钩子都不挂） |
+
+配置：`H3BattleStore.default.ini [CrashFix] DisableObstacle=0 / DisableAura=0`（1=不挂，user.ini 可覆盖）。守卫 id：`CrashFix.RemoveObstacle` / `CrashFix.UpdateAuraLinks` / `CrashFix.FindAndRemove`；宿主守卫数 23→26（上限 32）。
+
+## 宿主交点（新事实，并入的额外收益）
+
+`BattleRestore.inc.cpp:193/198` 的恢复事务用函数指针 `kObstacleRemove = (ObstacleRemoveFn_)0x466710` **直呼**该地址（`:210 kObstacleRemove(mgr, index)`），**不是挂钩**——三处修复挂钩后，**读档恢复清障碍的非挂钩调用同样落进被钩函数**，坏 def 时清 duration 并跳过，恢复流程不会因陈旧指针崩掉。另核实：三地址在本仓库无其它 `WriteHiHook`（`0x43E720` 只在采集/编码代码里作为「陈旧链接崩溃源」被注释提及），与 `BattleStore.ObstacleTransaction`（事务层守卫）分属不同层、不互相覆盖。
+
+## 顺带修掉的宿主老缺陷：`IniWriteKeyUtf8` 原地截断
+
+给 `[CrashFix]` 写分层配置回归时暴露：宿主写入器**重写已有文件**时会吃掉每个既有键的值（`MinLevel = debug` → `MinLevel`）。根因：匹配键名时把 `'='` 临时写 0 再 `IniTrim_`，等号前的空格被写成 0，恢复 `'='` 也补不回那个空格，该行在 `strlen` 口径下被截断；每写一次吃掉一个既有键（反复写还会产生重复键行）。玩家侧表现＝用悬浮条改一次日志级别，`user.ini` 里热键/界面键的值被逐个吃空、静默回落默认。修法自 H3Space/H3RndNew 已修版移植（**匹配时不得改写源行**：向前跳过等号前空白算键长 + `strncmp`），移植后归一化注释下 117 有效行与已修版全等。回归在 `H3BattleStore\tests\CrashFixTests.cpp`（同文件第二次写入后断言首键值仍在）+ 独立探针 `ini-probe`（四种写入序列）。
+
+## 验收边界（2026-10-15）
+
+已做：两变体构建 0 警告 0 错误；宿主七组单测全绿（新增 `CrashFixTests` 5 用例 21 断言）；部署副本与构建产物 SHA256 一致；DLL 字节取证——三个 `CrashFix.*` 守卫名与 `DisableObstacle`/`DisableAura` 在宿主 DLL 各 1 次、在 H3Space 新 DLL **各 0 次**。**实机验收归用户**：三行 `[CrashFix] [障碍]/[光环]/[阻止清理] … 已注册` 日志与三类崩溃场景复测；两个插件需同批更新（随身空间已不再提供该保护）。设计文档见 `H3BattleStore\docs\12-战斗崩溃修复迁入.md`。
