@@ -500,4 +500,24 @@ if (file == INVALID_HANDLE_VALUE) {
 - 产物字节取证（UTF-8 口径）：`smallfont.fnt` **0 次**、`smalfont.fnt` 1 次、`打包日志` 2 次、`设置窗触发` 2 次、`界面触发` 0 次、`打包日志按钮 create=` 0 次（面板创建块已删）、`状态条 create=` 1 次（保留）。
 - 实机（用户执行）：①背包界面正常展开、日志不再出现 `WarehouseUiModal` 异常行，且应看到 `状态条 create=1`；②分页行右侧页码增至 10 个；③F11 设置窗「日志等级」行右端点「打包日志」→ 弹「日志已打包」且 `.7z` 已在剪贴板。
 
+## 24. 打包日志改为「不限份数，只按文件名前缀」（2026-10-15 round-27）
+
+**用户裁定（原话）**：「打包日志功能还要再调一下,当前是只取了最后5个日志文件,改成不限数量,只限文件名前缀」。
+
+- `LogPackCollectRecent_(out, max_count)` → `LogPackCollectLogs_(LogPackEntry** out)`：收集**全部** `<基名>_*.log`
+  （基名仍来自 `g_log_base` = DLL 名去扩展名，与日志器同源、与同目录其它插件前缀互斥；基名缺失才退回写死 `H3Space_`），
+  按写入时间降序；内部数组按需 2 倍扩容（起始 16），**不设份数上限**，成功时把堆数组交给调用方 `delete[]`；
+  无匹配 / 分配失败返回 0 且 `*out = nullptr`。
+- 打包侧缓冲从固定 `BYTE* datas[6]` 改为按 `nItems = nLogs + 1`（多一份 `00_说明.txt`）堆分配：五个数组
+  `datas/packs/pack_lens/unpack_sizes/crcs`，元素初始化为 null，`bail` 与成功路径统一 `delete[]`（元素数按 `nItems` 走）。
+- `00_说明.txt` 文案改为「包含全部 %d 份日志（不限份数，按文件名前缀收集）」，份数取实际收集数。
+- 实际份数仍由日志器自己的保留策略兜底（`ConfigLog.inc.cpp`：`MAX_LOG_FILES_TO_KEEP = 30`、扫描上限
+  `MAX_LOG_FILES_TO_SCAN = 1024`），打包侧不再截断——所以"不限数量"不会无限膨胀。
+- 单测：`LogPackTests` 53 → **60 断言**：`LogPackCollectLogs_: 只收自家、按时间降序`（改新 API + 断言返回指针非空）；
+  新增 `LogPackCollectLogs_: 不限份数（12 份全收，旧的也在内）`（旧实现必然红：上限 5 时 `n == 5 ≠ 12`）；
+  `PackRecentLogs_: 超过 5 份也全进包（不限份数）`（8 份逐个查 7z 明文头 UTF-16LE 名字流，旧实现只有 5 个名能命中）。
+- 文档同步：`docs\骨架模块说明.md` §4（符号表 + 新增"份数策略"段）、`README.md` 日志与反馈、`使用说明.txt` 日志打包条目。
+- 验收：`build.bat` 0 警告 0 错误；18 套单测全绿；`deploy.bat` 部署 DLL 与 `Release\H3Space.dll` 同哈希 `8B0AC8F4A7836FB029EA77C29075555F7170ED03D08F9CACCFE7938723F8370F`（233984 B）；
+  产物字节取证（UTF-8 口径）：`最近五份完整日志` **0 次**、`包含全部 %d 份日志` 1 次、`不限份数` 1 次。
+
 
