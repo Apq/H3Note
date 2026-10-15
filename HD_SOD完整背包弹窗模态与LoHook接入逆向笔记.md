@@ -434,6 +434,8 @@ if (file == INVALID_HANDLE_VALUE) {
 
 ## 22. 随身空间分页行右端「打包日志」按钮（2026-10-15 round-25）
 
+> **round-26 更正（见 §23）**：本节的两处结论已作废——①按钮落点从背包分页行右端**移到 F11 设置窗**（用户裁定）；②`"smallfont.fnt"` 是**游戏里不存在的字体名**（正确名 `smalfont.fnt`），它正是本次 `0xC0000005` 的根因（§23.1）。本节保留作为缺陷引入点的原始记录。
+
 **用户裁定（原话）**：「在背包界面 的右侧,添加一个打包日志的按钮,功能参考"D:\GitHub\H3\H3BattleStore"项目中的打包日志按钮」。
 
 ### 22.1 参考件（H3BattleStore）拆到什么程度
@@ -462,5 +464,40 @@ if (file == INVALID_HANDLE_VALUE) {
 - `build_and_deploy.bat` 0 警告 0 错误；18 套单测全绿（`warehouse UI flow` 227→**230 checks**：新增 round-25 三断言——贴右几何、页码/按钮永重叠（`numbersEnd ≤ PackLogButtonX-4`）、30053 进白名单且 30054 不进）；round-12 断言同步 10→8（`CenteredPagerNumbersX(405,8,28,4)==58`）。
 - **证伪**：临时把白名单条目改成 `id == kWhUiPackLogButtonId && id != kWhUiPackLogButtonId` → 恰好红 `round-25 pack-log button id joins the warehouse control whitelist`（1/230 failed）→ 还原 → 全绿。部署 DLL 与 `Release\H3Space.dll` 同哈希 `C76B31F8…`。
 - 实机（用户执行）：展开随身空间层，点右下角「打包日志」→ 应弹「日志已打包」窗，且 `.7z` 路径已在剪贴板（可直接粘贴到聊天框）；连点不重复打包；分页行右侧 8 个页码仍可点。
+
+## 23. 「打包日志」按钮迁到 F11 设置窗，并纠正 round-25 的不存在字体名（2026-10-15 round-26）
+
+**用户裁定（原话）**：「这样:打包日志按钮别放到背包界面,放到F11界面里去(界面不够高就加高)」。
+起因：用户报「随身空间 报错了,你看下日志」，日志里出现
+`[Guard] WarehouseUiModal 异常 0xC0000005(访问冲突: 读取 0x00000006) addr=0x0324B063 HD_TC2.dll+0xB063`。
+
+### 23.1 HD 字体模块（HD_TC2.dll）取证与崩溃机理
+
+| 事实 | 证据 |
+|------|------|
+| `HD_TC2.dll` 是 HD 的**字体/文本**模块 | 144896 B、ImageBase 0x02000000、仅导出 `Start`/`_Start@0`(RVA 0x1000)；可打印串只有字体标签比较：`=SMAL`(字节 `3D 53 4D 41 4C` 即 `cmp eax,'SMAL'`)、`=TINY`、`=S_TI`、`=MEDF`、`=BIGF`、`=VERD`、`=CHAM`——即按**4 字符前缀**认字体 |
+| 运行期基址 0x03240000（`HD_TC2.dll+0xB063` ⇒ VA 0x0324B063） | 崩溃行 + 模块基址反推 |
+| 故障例程 RVA 0xB050：arg1=对象、arg2=文本/字体 id；`mov ecx,[eax]`→`call [ecx+2Ch]`(getter)→`call eax`(ecx=arg2) 取字体指针→`mov edx,eax` | dumpbin 反汇编切片（HD_TC2 标签 = ImageBase+RVA，如 `0200B063`） |
+| `0200B063: movsx eax,byte ptr [edx+6]`：**edx==NULL 时读 0x6** ⇒ 正是 `读取 0x00000006` | 与异常操作数逐字吻合 |
+| 取到 NULL 的原因：**字体名不存在** | 全盘取证：`H3bitmap.lod` 内只有 `smalfont.fnt`×1、`bigfont.fnt`×1；`_HD3_Data` 下只有 `smalfont.fnt`/`SMALFONT.FNT`/`bigfont.fnt`/`MedFont.fnt`/`tiny.fnt`/`verd10b.fnt`/`cham.fnt`；**全游戏目录无 `smallfont.fnt`** |
+
+结论：round-25 的「打包日志」按钮写 `H3DlgCaptionButton::Create(..., "", GBK"打包日志", "smallfont.fnt", ...)`，字体名是**不存在的** `smallfont.fnt`（正确名 `smalfont.fnt`，H3API 常量 `NH3Dlg::Text::SMALL = 0x65F2F8`）→ 字体查表返回 NULL → HD 字体例程按空指针取 `[+6]` → `0xC0000005`。日志顺序吻合：崩溃点在「素材 ready」之后、「打包日志按钮 create=」（round-25 新增日志）与「状态条 create=」之前——即**第一条真正被执行的 caption 按钮**（前面几个 caption 按钮只在 PCX 素材缺失的降级路径才走）。
+
+> 判定口径（可复用）：`GuardCrashFilter_` 日志里的钩子名 ⇔ 捕获异常的铠甲点，本例 `WarehouseUiModal` = attach 钩子（`WarehouseUiStageB.inc.cpp:77`）包住 `Attach(...)`，故异常发生在**面板创建过程中**；「素材 ready」是创建块最后一条成功日志，其后两条 create 日志缺失即圈定崩溃区间（创建块本身耗时 3.6s 的原因=64 槽 PCX/DEF + 12 页签 + 50 张贴图逐个从 LOD 取出）。round-25 的 21:17:44 构建（提交前工作区已含该改动）与 21:51 构建的两次日志同源同点，属**同一缺陷复现**，不是用户其他改动所致。
+
+### 23.2 round-26 落点（F11 设置窗）
+
+- 按钮移出背包分页行：删面板局部 `kWhUiPackLogId_` 与 `warehouseui::kWhUiPackLogButtonId`（30053 与 `static_assert` 互锁一并删）、`WarehouseUiPackLogs_`、CLICK 分支、创建块与 GBK 文案常量；`IsWarehouseControlId` 不再吞 30053。
+- 页码几何回到 round-24 状态：`kPagerNumbersRightLimit(panelWidth)=panelWidth-18`（405→387），`kPagerMaxButtons` **8→10**（[58,387) 329px 放 10 个占 316px，`CenteredPagerNumbersX(405,10,28,4)==64`）；`kPackLogButtonWidth`/`PackLogButtonX` 删除。
+- 设置窗（`HdSettingsUi.inc.cpp`）新增：`PackLogsFromSettings_()`（功能体与 round-25 同源，日志前缀改「设置窗触发」）+ `RunPackLogsFromSettings_()`（SEH 外壳，异常只等于“这次没打包”，日志 `真随机: 打包日志异常`）；控件 = `CreateLogSurface_` 画的深棕底 + 金边 PCX16（id `0x7E17`）+ 可点 GBK 文字（id `0x7E1E`，`smalfont.fnt`、色 5 / 中中对齐），两者都进 `OnLeftClick` 分派；下拉展开时被 `kSdLogShieldId_` 整窗接管层挡住。
+- 几何进 `TextLayout.hpp` 纯常量 + 静态断言（`kSdWidth_=340`、`kSdPackLogX_=250`、`kSdPackLogW_=72`、`kSdPackLogH_=22`；右缘 18px、不压下拉框），对话框与单测共用；窗口高度**不需要加高**（原 340x190 足够，按钮与日志等级下拉框同行）。
+- 同类缺陷一并纠正：`WarehouseUiPanel.inc.cpp` 三按钮降级路径的 `"smallfont.fnt"` → `"smalfont.fnt"`（该路径仅 PCX 素材缺失时执行，属潜在同源崩溃）。
+
+### 23.3 验证
+
+- `build.bat` 0 警告 0 错误；`run-unit-tests.bat` 18 套全绿（`warehouse UI flow` **231 checks**：round-25 三断言换成 round-26 四断言——30053 已出白名单且 30054 仍不进、30400 仍吞、页码区右界 387 与 10 个按钮、F11 按钮 18px 边距；round-12 断言同步 8→10、起点 58→64；页码槽位上限注释改 30400..30409）。
+- `deploy.bat` 部署成功，部署 DLL 与 `Release\H3Space.dll` 同哈希 `C0557A260C77A7321EE0AD953DA55770BB86CF41582E1B3B90384D8DA877719C`（233472 B）。
+- 产物字节取证（UTF-8 口径）：`smallfont.fnt` **0 次**、`smalfont.fnt` 1 次、`打包日志` 2 次、`设置窗触发` 2 次、`界面触发` 0 次、`打包日志按钮 create=` 0 次（面板创建块已删）、`状态条 create=` 1 次（保留）。
+- 实机（用户执行）：①背包界面正常展开、日志不再出现 `WarehouseUiModal` 异常行，且应看到 `状态条 create=1`；②分页行右侧页码增至 10 个；③F11 设置窗「日志等级」行右端点「打包日志」→ 弹「日志已打包」且 `.7z` 已在剪贴板。
 
 
