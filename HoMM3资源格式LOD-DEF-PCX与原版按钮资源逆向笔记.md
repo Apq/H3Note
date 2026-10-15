@@ -2,7 +2,7 @@
 
 > 目标版本：`D:\Heroes3\Heroes3_2026.10.09`（SoD + HD Mod，`HD_SOD.dll` 0.2.0.92 / ProductVersion 5.0.0.4）
 > 来源：只读该游戏目录的 `Data\*.lod`、`_HD3_Data\**\*.def|*.pcx`，用 python 自写解析器逐块解码并把帧渲染成 PNG 目视核对
-> 记录日期：2026-10-14（H3RndNew 仓库 UI round-19 需求“找原版有没有表示关闭的 X 形按钮”牵引出的资源考古）
+> 记录日期：2026-10-14（H3RndNew 随身空间 UI round-19 需求“找原版有没有表示关闭的 X 形按钮”牵引出的资源考古）
 > 脚本：`D:\logs\dsh\scripts\h3-warehouse-ui\{find_close_x.py, probe_defs.py, decode_cancel.py, decode_common.py}`，产物在 `...\x19\`
 
 ## 1. 结论速览
@@ -89,7 +89,7 @@ n × uint32 帧数据偏移（各自指向帧头）
 
 | 资源 | 尺寸 | 帧名/语义 |
 | --- | --- | --- |
-| `bckpck.def` | 52×36 | `bckpck_n/s/d` — 背包窗按钮（与仓库/背包主题最相关） |
+| `bckpck.def` | 52×36 | `bckpck_n/s/d` — 背包窗按钮（与随身空间/背包主题最相关） |
 | `hd_split.def` / `hd_xchng.def` | 52×36 | `split(_p/_d)` / `xchng(_p)` — 分兵 / 交换 |
 | `hd_movl/hd_movr/hd_mov1l/hd_mov1r` | 52×36 / 37×19 | 移动/快速移动 |
 | `SwAML/SwAMR/SwCML/SwCMR/SwSpl/SwXCh` | 48..64 宽 | 战阵面板按钮（分兵/交换） |
@@ -115,7 +115,7 @@ Start-Process -File $py -ArgumentList @('-X','utf8','D:\logs\dsh\scripts\h3-ware
 - **只读游戏目录**，产物一律落 `D:\logs\dsh\scripts\h3-warehouse-ui\x19\`；不要往游戏目录写任何解码中间产物。
 - 大 LOD 单次读取约几十秒（`H3bitmap.lod` 104MB、`H3sprite.lod` 67MB）：脚本要“一个 LOD 只读一次、一次取全部目标”，否则每个目标重读一遍会慢到不可用。
 
-## 7. 对 H3RndNew 仓库 UI 的影响（round-19 裁定）
+## 7. 对 H3RndNew 随身空间 UI 的影响（round-19 裁定）
 
 用户要求“X 按钮找一下原版资源有没有表示关闭的 X 形按钮（没有就用当前的）”。取证结论是**没有字面 X 形按钮**，于是**保留当前字体 “X” 的关闭按钮**，理由两条：
 
