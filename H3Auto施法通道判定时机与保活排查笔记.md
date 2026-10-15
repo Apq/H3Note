@@ -69,15 +69,43 @@
   - 根因推论：**按 F9 切全自动时，当前正在行动的部队当回合不会施法**（那次交权已经过去，且消息入口不判施法）；必须等下一次交权（自己下一支部队行动，或该部队「等待」后再次行动）才会补施。玩家体感「开了自动却不施法」即源于此。
   - 同时反证：法术选取、队伍绑定、阈值、法力、已学法术都没问题（能施放说明这些条件全部满足）。
 
-## 5. 待办与候选修法（**未实施**，需用户裁定）
+## 5. 已实施的修法（2026-10-15，A+B+E，**仅合并版 H3BattleStore**，用户裁定）
 
-1. 诊断可见性：把「该救不救」的原因（非全自动 / `heroCasted` 挡板 / 未学法术 / 法力不足 / 方式=不保活 / 阈值未达 / 未绑定 / 无尸体格）提到 `info` 级并按回合限频；`g_control != CM_AUTO` 分支目前完全无日志。
-2. 行为候选：
-   - a. 消息入口在 `decision == CD_EXECUTE_H3AUTO` 且 `mgr->action == 0`（动作未落地）时，先判一次施法通道再 `TrySubmitConfiguredAction_`；风险：消息入口每帧调用，需靠「一回合一次」+ `g_cast_in_flight` 守卫去重（改钩子入口前必须先加载技能 `h3-plugin-crash-guard`）。
-   - b. F9 切到 `CM_AUTO` 成功后（`SetControlMode_` / `PollControlHotkeys_` 路径）立即补判一次施法通道；频率低、时序自然（玩家此刻正等输入）。
-   - c. 只改文档/提示：说明「保活只在全自动下生效；切换后需下一次部队行动（或先手动『等待』）才补施」。
-3. `[Track] identity lost slot=%d expect=0x%X got=0x%X` 打印的两个值都是 `creature_id`（本次日志 3 次，`expect=0x38 got=0x38`），看不出究竟哪个身份分量不等 → 应改为打印完整身份元组（kind/cid/occurrence/hex/…）。该日志不影响保活（`identity lost` 只清 `alive/count_alive/hex`，不清 `bound`）。
-4. 合并版同代码同日志级别（本次核对：`H3BattleStore\modules\AutoExecute.inc.cpp` 的 `1400/1442/1496/1507/1538` 仍为 `LogDebug`，`:1554` 为 `LogInfo`），任何修法应落在 H3BattleStore。
+用户裁定做 A + B + E：「只在 H3BattleStore 项目中修，原 H3Auto 项目不用更新」。改动全在 `H3BattleStore\modules\AutoExecute.inc.cpp`；改前按纪律加载技能 `h3-plugin-crash-guard`。
+
+### 5.1 A：消息入口补判施法通道（每回合一次）
+
+新增 `static bool TryProbeCastChannelFromMsg_(_BattleMgr_* mgr, bool force)`，放在 `TryAutoExecuteActiveStack` 上方：
+
+- 门槛：`!mgr` → 退；`mgr->action != 0` → 退（**施法必须在提交动作之前**，此刻 action 仍为 0）；`mgr->auto_combat || IsHiddenBattle(mgr) || IsTacticsPhase_(mgr)` → 退（与 `TrySubmitConfiguredAction_` 同口径）；`force == false` 时再过**每回合一次**闸门（静态 `s_gate_turn` 与 `GetCurrentBattleTurn_` 比较）。
+- 动作：`LogDebug("[Protect] msg-entry cast probe turn=%d force=%d control=%d action=%d", …)` 后按交权路径同序调 `TryProtectCast_(mgr)` → `TryAttackMagicCast_(mgr)`；返回值忽略，施放与否由通道内部静默判定（已施法/无法施法/方式不保活/阈值未达/无尸体格）。
+- 调用点：`TryAutoExecuteActiveStack` 内 `DecideTakeover` 之后、`TrySubmitConfiguredAction_` **之前**，条件 `decision == CD_EXECUTE_H3AUTO`。
+
+### 5.2 B：F9 切全自动当帧强制补判
+
+- 新增文件级 `static bool g_cast_probe_pending = false;`（放在 `g_oneshot_return` 之后）。
+- `ToggleBattleManual_()` 记录 `const bool to_auto = (g_control == CM_MANUAL);` → `SetControlMode_(to_auto ? CM_AUTO : CM_MANUAL);` → `to_auto` 时置 `g_cast_probe_pending = true`。
+- 消息入口在 `PollControlHotkeys_` 之后立即取走该标志并 `force=true` 补判——**不看当前部队是否有配置**，覆盖「当前部队是手动规则/等待中，`DecideTakeover` 不返回代发」的情形。
+- 交权路径 `HH_ShouldAutoExecute` 在 `TryProtectCast_(This)` 之后消费该标志（`g_cast_probe_pending = false;`），避免下一帧消息入口重复补判。
+- 与 A 的分工：A 只在「判为代发动作」时生效且每回合一次；B 是按键驱动的一次性强制补判，两者都落在消息入口、都在提交动作之前。
+
+### 5.3 E：身份丢失日志打印完整元组
+
+`UpdateStackTracking_` 原 `LogWarn("[Track] identity lost slot=%d expect=0x%X got=0x%X", i, t.creature_id, s->creature_id)`（两值同源、无信息量）改为打印 `attempt=期望/当前`、`cid=期望/当前` 与身份元组 `id(k=kind s=side v=value o=occurrence)` 的「期望/当前」对照。判等口径未改：`StableStackIdentityEquals` 要求 `kind/side/value/occurrence` 全等且任一侧 `STACK_ID_NONE` 即不等（`PolicyCore.hpp:515-521`）；身份结构 `{kind, side, value, occurrence}`（`PolicyCore.hpp:479-484`，kind ∈ NONE/ARMY_SLOT/WAR_MACHINE/SUMMON）。
+
+### 5.4 铠甲与验证
+
+- 补判函数在消息入口既有 `__try` 内调用（与交权路径把 `TryProtectCast_` 放 `__try` 内同规），**不新增钩子、不改钩子入口结构、原版函数调用次数不变**。
+- 默认与 `H3BS_UI_NULL=1` 两变体 `build.bat` 各 exit 0、**0 错误 0 警告**；`tests\run-unit-tests.ps1` **七组**全绿（Archive 12/217、Codec 6/4224、LogControls 3/30167、UiPort 3/39、AltTail 7/14、PolicyCore 29/1609、CrashFixTests 5/21），末行 `PASS all unit tests (Catch2, no game, no hooks, no real clipboard)`。
+- 产物：默认 `Release\H3BattleStore.dll` **732672 B** SHA256 `08FAF0AA97FDF01AE89CCB499864E2E58C865220A7E440358F9E661249EF6617`（上一轮 732160 B，本次 +512 B）；NULL `Release\null\H3BattleStore.dll` **401408 B** SHA256 `817C67D231B8C922528DD53CF8C37573BDE1DB5CABD3AE81940BF1728E1B86DB`；`deploy.bat` exit 0，部署副本与 `Release\` 源 SHA256 一致（部署到 `D:\Heroes3\Heroes3_2026.10.09\_HD3_Data\Packs\热血插件\`）。
+- 文档同步：`H3BattleStore\docs\11-H3Auto功能移植.md` §5.7（新增）、`docs\变更记录.md` 2026-10-15 首条。
+
+### 5.5 仍未做（待用户裁定）
+
+1. **D（诊断可见性）未选**：把「该救不救」的原因（非全自动 / `heroCasted` 挡板 / 未学法术 / 法力不足 / 方式=不保活 / 阈值未达 / 未绑定 / 无尸体格）提到 `info` 级并按回合限频；`g_control != CM_AUTO` 分支目前仍然**完全无日志**——下次玩家默认日志依旧只能证明「没施法」，不能说明原因，排查仍需请玩家切 debug 级。
+2. 面板/文档提示（原候选 c）未加：仍没有「保活只在全自动下生效；切换后需下一次部队行动或先手动『等待』才补施」的明示文案。
+3. **实机验收归用户**：按 F9 后当回合是否立即补施、「等待」是否不再是必须步骤；自动战斗/隐藏战斗/战术期不应出现施放（本次新增的门槛）。
+4. 玩家侧现跑独立版 H3Auto v0.13.2026.1012，本次修法只进合并版 H3BattleStore；是否让玩家改用合并版由用户决定（版本号由用户手动提升，不由 agent bump）。
 
 ## 6. 日志取证速查（下次排查直接抄）
 
