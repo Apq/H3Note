@@ -302,3 +302,89 @@
 **坑**：存档前必须把 mock 流模式设回 `"wb"`（`g_wh_test_mode_`）。读档用例留下的 `"rb"` 会让捕获窗口匹配不到写模式 → `WhAfterSave_` 走"未捕获实际路径"fail-closed → 不附加，测试会误报在"重新附加"那条断言上。
 
 回归：`build_and_deploy.bat` 0 警告 0 错误；16 套单测全绿（含 `PASS warehouse hooks: …`）；部署 DLL 与 `Release\H3Space.dll` 同哈希 `93892863…C6F9865`。游戏内验证由玩家执行。文档同步：`README.md`、`docs\骨架模块说明.md`。
+
+## 20. 第十三轮（2026-10-15）：§19 结论修正——清空的正确时点是"游戏结束"，并查清 N/L 离开战局的链路
+
+### 20.1 用户裁定（推翻 §19 的语义）
+
+§19 把"读档发现档里没有随身空间块 → 清空内存"整体判为 bug 并改为"绝不清空"。玩家原话（2026-10-15）：
+
+> 游戏结束时（回到新游戏或读档或其它系统界面，特征是**除非读档，否则不可能再回到当前游戏**），是应该清空所有英雄的随身空间的内存的。
+
+即：**清空这件事本身是对的**，错的是时点与判据——不该用"档里没有附件"这个歧义条件去清，而应该用"这一局结束了"这个事件去清。随身空间内存的存活期 = **一局游戏**。
+
+### 20.2 冒险界面按 N/L 离开战局的链路（反编译证据）
+
+三个"命令分派"入口都会汇到同一个"建并运行选图/读档对话框"的函数 `FUN_004180c0 @ 0x4180C0`（624 字节，`src/h3/uncategorized/blk_410000.c:25443`）：
+
+| 分派点 | 位置 | 分支 |
+|---|---|---|
+| `FUN_00408ba0 @ 0x408BA0` | `blk_400000.c:17354` | `case 0x1f:` → `FUN_004180c0(); return 1;` |
+| `FUN_0041ab60 @ 0x41AB60` | `audio_video/blk_410000.c:700` | `case 0x6a:` → `FUN_004180c0(); break;` |
+| `FUN_004eea70 @ 0x4EEA70` | `network/blk_4e0000.c:4114` | 同一函数内另有三处分派到 `FUN_004f0b20 @ 0x4F0B20`（新游戏界面，`FUN_00579ce0(0)`）与 `FUN_004f0ca0 @ 0x4F0CA0`（读档界面，`FUN_00579ce0(1)`），见 `blk_4f0000.c:726 / 988`，case 0x64 / 0x65 / 0x67 |
+
+`FUN_004180c0` 体内序列（行号为 `blk_410000.c`，该导出每两行夹一个空行）：
+
+```
+25616: FUN_00618060();
+25624: if (extraout_CL == '\0') { FUN_0041a240(); for (i=0..7) if (!DAT_00699538[0x1f636+i]) FUN_004ce600(i) 计数 }
+25700: FUN_0050cea0();
+25704: if (DAT_0069779c == '\0') 用 &DAT_006603f0 否则用 &DAT_006603f8 → FUN_006179de(...)  // 组标题串
+25756: local_1c = 2;
+25764: FUN_00579ce0();     // 选图/读档对话框 ctor（已挂钩 0x579CE0）
+25780: FUN_00584ec0();     // 模态运行
+25792: FUN_00583e10();
+25812: if ((char)unaff_EDI == '\0') FUN_00417380();
+```
+
+**关键结论一：打开界面这一步不卸载当前游戏。** 三处分派器所在的 `blk_400000.c` / `blk_410000.c` / `network/blk_4e0000.c` 里**没有任何**会话丢弃调用（`FUN_004bee60` 的全部调用点见下），只有屏幕状态位（`DAT_00699538+0x1f69d`）、`DAT_006992d0+0x38` 判定与 `FUN_004c5ac0(会话+0x1f7d4, 会话+0x1f6d9, 0)`。玩家"回不到当前局"是因为该界面没有回到战局的通路，不是内存已被释放。
+
+### 20.3 引擎自己"丢弃当前会话"的那一步：`FUN_004bee60 @ 0x4BEE60`
+
+`FUN_004bee60`（387 字节，`src/h3/uncategorized/blk_4b0000.c:44585`）= 会话重置：清 `DAT_0069956c / DAT_0069955c=-1 / DAT_00698884 / DAT_00697798 / DAT_006977a0 / DAT_0069844c`；把 `DAT_006a5dc4[0x20]+0x30` 的场景路径 `_strncpy` 进 `会话+0x1f4d5`（0x15f 字节）；清 `&DAT_0069fb80` 8 项；复位 `会话+0x7d91`(8) / `+0x137c6`(0x27) / `+0x137ed`(0x9c)；再逐玩家 0..7 调 `FUN_004b8150(i)`、`FUN_004d8990(i)`（二者均为**纯字段复位**，无 free）。
+
+它的执行时点正是"确认新局/读档"：
+
+| 路径 | 证据 |
+|---|---|
+| 读档 | `FUN_004beff0 @ 0x4BEFF0`（LoadGame，565B，`src/h3/system/blk_4b0000.c:1378`）的**第一条实质语句**就是 `1475: FUN_004bee60();`，之后 `1483: if (param_3 == 0) { DAT_00697308 = 0; ... FUN_004d6eb0(...,&DAT_00677d6c) 读档 ... }` |
+| 新局 | `FUN_0058c840 @ 0x58C840`（999B）的 `blk_580000.c:34963: FUN_004bee60();`，随后 `35123: FUN_004c01e0(会话+0x1f7d4, &DAT_00699430, &DAT_0069fb80, mode)` 初始化地图 |
+
+而读档路径本身是在建档入口内部触发的：`FUN_0058bfb0 @ 0x58BFB0` 判 `+0x64 != 0` → `33821: FUN_0058c560 @ 0x58C560` → `blk_580000.c:34308: FUN_004beff0(会话+0x1f6d9, 0, 0)`（LoadGame）。
+
+**关键结论二：当前游戏是在"确认新局/读档"（建档入口 `0x58BFB0` 内部）被引擎重置/替换的，不是在按 N/L 打开界面时。** `FUN_004bee60` 的其它调用点（退出/回主菜单类路径）：`blk_580000.c:761 / 2976 / 7845 / 23491`、`menu/blk_570000.c:7547`（属 `FUN_0057f600 @ 0x57F600`）、`system/blk_4b0000.c:1475`、`ui_assets/blk_450000.c:7639`、`uncategorized/blk_4c0000.c:38255`、`uncategorized/blk_570000.c:29482`；主菜单初始化见 `FUN_004edce0 @ 0x4EDCE0`（`system/blk_4e0000.c:594: DAT_00698450 = 0;`，含 `LoadMenuA`）。
+
+### 20.4 修正后的实现（round-24）
+
+`OnWhStartGame_`（钩 `0x58BFB0`）：**把清空搬到原函数调用之前**，条件从"仅新局"扩为"新局 **或** 读档"，存档上下文不清：
+
+```cpp
+static int __stdcall OnWhStartGame_(HiHook* hook, int self)
+{
+    const LONG context = g_scenario_context_;
+    __try {
+        if (context == kScenarioNewGame_ || context == kScenarioLoad_) {
+            const warehouse::Result cleared = warehouse::ClearForNewGame(g_warehouse_);
+            InterlockedExchange(&g_wh_locked_, 0);
+            LogInfo("随身空间: 游戏结束（%s），156 个随身空间已清空 result=%d",
+                context == kScenarioLoad_ ? "读档确认" : "新局确认", static_cast<int>(cleared));
+        }
+    } __except (GuardCrashFilter_(GUARD_WH_START, GetExceptionInformation())) {}
+    const int result = OnStartGame_(hook, self);   // CrashGuard L2：原函数在 __try 外恰好一次
+    return result;
+}
+```
+
+- **为什么必须前置**：读档发生在 `0x58BFB0` 内部（见 20.3 的表），清空若放在原函数之后，会把刚读回来的附件内容一起抹掉。前置后清空与引擎自己的会话重置（`FUN_004bee60`）同处一次建档调用内，且早于"内容替换"。
+- **`WhAfterLoad_` 的 `NoAttachmentLegacyUnknown` 分支降级为兜底**：仍不清空、只解锁并记日志，用于"某次读档绕过建档入口"的异常情形（正常路径下内存已被游戏结束清空，保留与清空等价）；避免异常路径下销毁玩家唯一副本。
+- **语义结果**：读一个无附件的档 → 随身空间为空（符合"旧档/new game 从空开始"）；新局 → 空；普通存档 → 完全不动。
+
+### 20.5 验证（离线，无需游戏）
+
+`tests\hook_abi_test.cpp`：
+
+1. 第 1 段断言改为"读档入口清空上一局的随身空间"，并新增"存档入口绝不清空"（`save entry never clears the live warehouse`）；
+2. 新增 2b **时序回归**：让 mock 的原函数在内部真走一次读档（`g_wh_start_drives_load_` 开关 + `MockWhStart_` 内调 `MockWhLoad_`，模拟 20.3 证明的"读档在建档函数内部"结构）。上一局残留 `{4,2}`、档里是 `{21,5}`，正确结果必须是 `{21,5}`——若清空发生在原函数之后，结果会是空，断言 `game-end clear runs before the native entry, so the load inside it survives` 即失败。
+3. 第 4 段（无附件档兜底不清空 + 下次存档重新附加）保留；证伪实验记录见 §19.4。
+
+回归：`build_and_deploy.bat` 0 警告 0 错误；17 套单测全绿；部署 DLL 与 `Release\H3Space.dll` 同哈希 `AA79187F…`。游戏内验证由玩家执行。
