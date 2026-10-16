@@ -201,9 +201,9 @@ void __fastcall FUN_10020ba0(uint *param_1 /*对象*/, int param_2 /*宝屋类�
   piVar9 = (int *)*piVar10;
   if (piVar9 != (int *)0x0) piVar10 = piVar9;             // 守军/奖励指针
   local_18 = piVar10;
-  if ((*param_1 & 0x2000000) == 0) {                      // 未访问过（visited 位）
+  if ((*param_1 & 0x2000000) == 0) {                      // 未清空（H3MapitemCreatureBank::taken = bit25）
     iVar11 = (*param_1 >> 0xd & 0xfff) * 0x6c + *(int *)(_DAT_00699538 + 0x4e3dc);
-    local_20 = iVar11;                                    // 该地图格位结构（stride 0x6C）
+    local_20 = iVar11;                                    // H3Main::creatureBanks[id]（H3CreatureBank 0x6C：守军+资源奖励+宝物向量）；id = 位域 bits13..24
     local_24 = (*(code *)0x44a990)();
     puVar8 = *(uint **)(iVar11 + 0x60);
     uVar6 = (uint)((int)*(uint **)(iVar11 + 100) + (3 - (int)puVar8)) >> 2;   // 该格对象链表长度
@@ -240,6 +240,8 @@ void __fastcall FUN_10020ba0(uint *param_1 /*对象*/, int param_2 /*宝屋类�
 2. 初稿判断"`0x10002A10` handler 就是 ALT+RMB 目标"。**错**：它只处理地形小物件（0x73..0x79、0x8C..0x92、0x7B、0x7D）且读的是 'A' 键，与宝屋/龙国无关。
 3. 初稿判断"HD_SOD 侧零命中 ALT，故与 HD Mod 无关"。**前提有误**：HD_SOD 用自备包装 `FUN_01005750(vk)` 查 ALT(0x12) 数十处（我只 grep 了 `GetKeyState(` 所以漏了），并且确实挂钩了游戏 `0x5D3640` 两次（回调 `FUN_01051d80`、`FUN_010e6fb0`）。但**结论仍成立**：HD_SOD 对本题对象信息链（`0x40A6DD`/`0x40A7B6`/`FUN_0040a530`）零命中，PTR 链与功能描述全部落在 SoD_SP。
 4. 初稿判断"分支未定、可能在另 106 个钩子里或 UNLEASHED/NCE 数据路径"。**错**：它不在 `hook_sites.csv` 里，因为它是**内联 JMP patch**（不是 patcher 的 LoHook/HiHook），所以按钩子表穷举永远找不到——这是本次的关键教训。
+5. 初稿曾把 `0x5D5010` 认作"原版弹出右键信息窗口"。**错**：`FUN_005d5010` 是部队交换/招募状态机（`switch(模式 0..9)`，操作 `+0x124/+0x134/+0x300` 的交换状态与 `+0x2C` 槽位）。原版右键对象信息窗实为 `FUN_00413720 @0x413720`，见 §10。
+6. 初稿 §5 曾把 `FUN_10020ba0` 里 `& 0x2000000` 注为"已访问位"。**更正**：是 `H3MapitemCreatureBank::taken`（已清空）位；"哪些玩家来过"是 bits 5..12 的 `visited:8` 位域（`FUN_0040d350` 用 `(*mapItem>>5) & (1<<宝屋子)` 查询）。
 
 ## 8. 取证产物与口径
 
@@ -254,3 +256,78 @@ void __fastcall FUN_10020ba0(uint *param_1 /*对象*/, int param_2 /*宝屋类�
 - `DAT_10065650` 的清零时机（静态只见一处写 `0x20`）。
 - 安装器里邻近的 `push 10022BF0h` / `push 4B8D93h` 一对（槽位/语义未逐字节核对）。
 - 实机验证：ALT+RMB 宝屋/龙国 的实际弹窗内容是否与 `FUN_10020ba0` 输出一一对应（游戏内测试由用户执行）。
+- 事件[3]（+0xC）`0x200` 位的极性与触发时序（§10.4：按三处用法反推为"右键按住"；可再读 `FUN_00602930` 事件构造或实机确认）。
+- `FUN_0040d350` 中 `FUN_00449370()` / `FUN_0040ab40(1)` 分支的确切语义（"访问过"时拼接的守军描述具体内容）。
+
+## 10. 原版右键信息弹窗（2026-10-16 下午追加；用户改问「原版在宝屋/龙国上点右键」）
+
+**结论：原版确实有弹窗**——按住右键时在对象旁弹出信息窗、松开后关闭。SoD_SP 的 ALT 高级对话框**就是替换它**：ALT 命中时跳过原版显示调用（`0x40A7B6` = `call 0x413720` 之后的收尾，见 §3.4），因此二者互斥。
+
+### 10.1 原版完整链路（Heroes3Src，含改名 pass 的函数名）
+
+```
+AdventureMap_AI_Main @ 0x408710（冒险地图事件分派器；SoD_SP 在此挂钩 0x4089AB/0x4089DC 置 ALT 标志）
+  event[0]==0x200 (eMsgCommand::MOUSE_BUTTON) → 按 event[1] (eMsgSubtype) 分派：
+    0x0C → AdventureMap_HandleClick      @ 0x409740
+    0x0D 且 !(event[3]&0x200) → AdventureMap_HandleRightClick @ 0x4099D0
+    0x0E 且  (event[3]&0x200) → AdventureMap_HandleDrag       @ 0x402E70
+  HandleClick / HandleRightClick 内部再按 event[2] 分派：
+    case 0 / 0x25 → FUN_0040a530 @ 0x40A530   ← SoD_SP 打补丁的函数（§3.1）
+    case 1        → FUN_0040a020 @ 0x40A020   ← 收起提示窗（见 10.3）
+FUN_0040a530 右键分支：if ((event+0xC) & 0x200) → 取光标下地图对象（edi：类型 +0x1E / 子类型 +0x22）
+  → switch(对象类型)：0x21/0x22/0x36/0x62 走专用窗口；default → call 0x413720  ← SoD_SP ALT 时跳过的就是这个 call
+FUN_00413720 @ 0x413720（9187B，原版对象信息文本构造器）
+  → 按对象类型 switch（约 60 个 case），文本写入全局缓冲 DAT_00697428
+  → 尾部：FUN_004f6930(&size) 量文本尺寸；x,y ← 对象格坐标×0x20，
+         钳制 x∈[8, 600-w]、y∈[8, 0x228-h]（0x228=552）
+  → FUN_004f6c00(x,y,0xffffffff,0,0xffffffff,0,0xffffffff,0,0xffffffff,0)  ← 弹窗（贴对象旁）
+```
+
+### 10.2 宝屋/龙国在原版分派器里的 case（与 SoD_SP 同一套宝屋子编号）
+
+```c
+case 0x10: FUN_0040d350((int)*(short*)(obj+0x22), mapItem, &DAT_006603bc, 1);  // CREATURE_BANK，子类型=宝屋子
+case 0x18: FUN_0040d350(8,  mapItem, &DAT_006603b0, 1);   // DERELICT_SHIP
+case 0x19: FUN_0040d350(10, mapItem, &DAT_006603b0, 1);   // DRAGON_UTOPIA＝龙国
+case 0x54: FUN_0040d350(9,  mapItem, &DAT_006603b0, 1);   // CRYPT
+case 0x55: FUN_0040d350(7,  mapItem, &DAT_006603b0, 1);   // SHIPWRECK
+```
+
+`FUN_0040d350 @ 0x40D350`（636B）＝**原版宝屋/龙国信息构造器**（SoD_SP `FUN_10020ba0` 的原版对应物）：
+
+- 首行 `pcVar2 = *(char **)(PTR_DAT_0067029c + 宝屋子*400 + 4)` —— 取宝屋表 **name 字段**（`PTR_DAT_0067029c` = 0x47A3C2 表的重定位指针；`+4` 与 SoD_SP 完全同源）。空串兜底。
+- 拼接第 5 参（格式/后缀串 `0x6603b0` / `0x6603bc`）。
+- 按访问状态选描述：`param_4 ∈ [0,7]` 且 `(*mapItem >> 5) & (1 << param_4)`（H3MapitemCreatureBank 的 `visited:8`，bits 5..12 = 哪些玩家来过）为假 → 用 `*(char**)(*(int*)(DAT_006a5dc4+0x20)+0x588)` 的通用描述串；否则若 `(*mapItem & 0x2000000) == 0`（未 taken）且 `FUN_00449370()` 为真 → `FUN_0040ab40(1)` 取详细串再拼接。
+- 即原版弹窗内容 ≈ **宝屋名 + （未访问）通用描述 / （访问过）详细串**。
+
+### 10.3 显示/隐藏函数（"松开后自动关闭"的机制）
+
+- **显示**：`FUN_004f6c00(x, y, 0xffffffff,0, 0xffffffff,0, 0xffffffff,0, 0xffffffff,0)`（10 参；后 8 个为配色，x/y = 窗口位置）。
+- **隐藏**：`FUN_004f6c00(0xffffffff, 0xffffffff, ...)`（首参 -1 即收起）。全 exe 40+ 处隐藏调用，几乎所有界面切换都先收起提示窗。
+- **收起点**：`FUN_0040a020 @ 0x40A020`（1293B）**首行**：
+
+```c
+if ((*(uint *)((int)event + 0xc) & 0x200) != 0) {
+    FUN_004f6c00(0xffffffff,0xffffffff,0xffffffff,0,0xffffffff,0,0xffffffff,0,0xffffffff,0);  // 收起提示窗
+    return;
+}
+AI_UnlockHero(0,1); ...   // 否则按事件坐标差移动英雄（右键拖动方向）
+```
+
+它由 `AdventureMap_HandleClick` 的 `case 1:`（`switch(event[2])`）调用。
+
+### 10.4 事件字段口径（H3API `H3CstMessages.hpp`）
+
+- `eMsgCommand`：`KEY_DOWN=1`、**`MOUSE_BUTTON = ITEM_COMMAND = 0x200`**、`MOUSE_WHEEL=0x20A`。
+- `eMsgSubtype`：`LBUTTON_DOWN=0xC`、`LBUTTON_CLICK=0xD`、**`RBUTTON_DOWN=0xE`**。
+- `eMsgFlag`：`SHIFT=1`、`CTRL=4`、`ALT=32`（与 SoD_SP 的 `DAT_10065650` 镜像一致）。
+- **事件[3]（+0xC）的 `0x200` 位未在 H3API 枚举中列出**；按三处用法（`FUN_0040a530` 为真→弹窗、`FUN_0040a020` 为真→收起、`AdventureMap_AI_Main` 0xD 要求为假 / 0xE 要求为真）反推为「右键按住」——**极性属推断，待实机确认**。这也解释了"按住显示、松开收起"。
+
+### 10.5 改造建议（若改原版弹窗而非 SoD_SP）
+
+| 想改什么 | 落点（游戏 exe，或自研插件挂钩） |
+|---|---|
+| 宝屋/龙国弹窗**内容** | `FUN_0040d350 @ 0x40D350`（名+描述拼接），或 `FUN_00413720` 的 case 0x10 / 0x19（其体内 L40481 / L40795） |
+| 弹窗**位置/尺寸** | `FUN_00413720` 尾部（坐标钳制与 `FUN_004f6c00` 调用，其体内 L45159-45187） |
+| 弹窗**显示/隐藏行为** | 显示 `FUN_004f6c00 @ 0x4F6C00`；收起 `FUN_0040a020 @ 0x40A020` 首行 |
+| 与 SoD_SP ALT 对话框**并存** | 注意 ALT 时 SoD_SP 跳过 `call 0x413720`，原版窗根本不构造 → 挂 `FUN_0040d350`/`FUN_00413720` 只影响**非 ALT** 的普通右键 |
