@@ -1,6 +1,13 @@
 # 冒险地图 ALT+右键「查看信息」归属与实现位置逆向笔记
 
-记录日期：2026-10-16。结论：**该功能由 SoD_SP.dll（热血 F12 插件目录）实现，与 HD Mod 无关**。本次为纯静态调研，未启动游戏、未改动任何代码。
+记录日期：2026-10-16。结论分两层，不能混为一谈：
+
+- **归属已定**：Changelog v1.18.0 第 279 行记载 "Added Advanced Dialogs to map adventure (ALT + RMB)"，且实现确实在 `SoD_SP.dll`（F12 插件）侧，**HD Mod 侧对同一链零命中**。这条有独立证据（Changelog + 107 个钩子注册表中第 11 项）支撑，可信。
+- **具体分支未定**：被找到的 `0x10002A10` handler 只覆盖地形物件（`BUSH`(0x73)..`FROZEN_LAKE`(0x79)、`HILL`(0x7B)、`KELP`(0x7D)），**与"宝屋/龙国"对不上**；且它查的是 `GetKeyState(0x41)`（= 键 'A'，VK 0x41），不是 ALT(0x12)。所以这个 handler 身份仍然存疑，不能直接当改造目标。
+
+本次为纯静态调研，未启动游戏、未改动任何代码。
+
+> ⚠️ 勘误（2026-10-16 10:12）：本笔记初稿曾把 `push 41h` 误写成 VK_SPACE。**0x41 = 键 'A'**，VK_SPACE 是 0x20。该 handler 判的键位因此完全对不上 ALT，这一点反过来提醒"命中分支 ≠ 目标功能"，见 §4 与 §5。
 
 ## 1. 用户问题
 
@@ -40,7 +47,7 @@ SoD_SP 的注入方式：handler 结束时把 `[ebx+0x20]` 改成 `0x005D460F`�
 | 地址 | 行为 |
 |---|---|
 | `10002A4A` | `mov eax,4CE950h; call eax` → 游戏谓词：`DAT_0069959c != 0 || DAT_00698a40 == 3` 才继续（否则走 `10002BF3` 直接返回原路径） |
-| `10002A59` | `push 41h; call GetKeyState` → 等 0x41 = **VK_SPACE**（不是 ALT；`test ax,ax; jns` 高位为 0 即松开时也跳过） |
+| `10002A59` | `push 41h; call GetKeyState` → 0x41 = **键 'A'**（不是 ALT；`test ax,ax; jns` 高位为 0 即松开时跳过） |
 | `10002A6A` | 取 `[0x69954C]`→`[eax+0x38]` 得 adv manager 指针 `esi` |
 | `10002A7A` | `mov eax,[ebx+0x1C]`：地图对象 type/subtype 域，减去 `0x73`（= `BUSH 115`） |
 | `10002AA4` | 校验：`MAP_ITEM_TYPE(ebx)==esi+1`（即鼠标下对象的类型字节） |
@@ -51,11 +58,11 @@ SoD_SP 的注入方式：handler 结束时把 `[ebx+0x20]` 改成 `0x005D460F`�
 | `10002BC8` | 拼完非空时：`ecx=[0x69954C]; call 005D5930; call 005D5810`（刷新 UI） |
 | `10002BE7` | `mov [ebx+0x20], 005D460Fh` ← **改写返回落点**，这就是"抢走原版右键弹窗"的一行 |
 
-- 键位修正：ini 没有暴露该功能开关，`GetKeyState(0x41)` 是 VK_SPACE。Changelog 说 ALT+RMB，但本机 `v1.19.4.2` 实际读的是空格（Changelog 落后于实现，或该版本改过键位）。**改造前务必以 `0x10002A59` 的 `push 41h` 为准自行实测**。
+- 键位事实：`0x10002A59` 的 `push 41h` = 键 'A'，**不是 ALT(0x12)、不是空格(0x20)**。Changelog 记载的功能是 ALT+RMB，但本机 `v1.19.4.2` 这个 handler 读的是 'A' —— 两者对不上，是"该 handler 可能根本不是 ALT+RMB 那个功能"的硬证据之一。
 
 ## 5. 类型常量口径
 
-`SoD_SP.dll` 的 `(type-0x73)<=6` 覆盖 `H3CstObjects.hpp` 的 `BUSH(115)…FROZEN_LAKE(121)`、`0x7B`=`HILL(123)`、`0x7D`=`KELP(125)`。宝屋/龙国类对象是否走这支，取决于它们的地图对象 type；需要按实际对象 id 复核（`TREASURE_CHEST=101`、`CRYPT=84`、`DRAGON_UTOPIA=25` 等均**不在**这些区间内，说明 handler 覆盖的是"地形小物件 + 指定类型"两套分支，宝屋那一支是 `(type-0x73)<=6` 还是 `(type-0x8C)<=6` 需实机确认）。
+`SoD_SP.dll` 的 `(type-0x73)<=6` 覆盖 `H3CstObjects.hpp` 的 `BUSH(115)…FROZEN_LAKE(121)`、`0x7B`=`HILL(123)`、`0x7D`=`KELP(125)`。宝屋/龙国类对象**不在**这些区间内（`TREASURE_CHEST=101`、`CRYPT=84`、`DRAGON_UTOPIA=25` 均不匹配四条分支中的任何一条：`0x73..0x79`、`0x8C..0x92`、`0x7B`、`0x7D`）。所以这个 handler 判的是**地形小物件**，不是宝屋/龙国。宝屋/龙国的实现要么在 SoD_SP 的另外 106 个钩子里，要么走另一条机制（例如 `UNLEASHED` 数据/`NCE` 之类读取地图存档扩展信息的路径），**尚未定位**。
 
 ## 6. 与 HD_SOD 的同地址函数对照（供改造时不误伤）
 
@@ -67,5 +74,6 @@ SoD_SP 的注入方式：handler 结束时把 `[ebx+0x20]` 改成 `0x005D460F`�
 
 ## 8. 待验证
 
-- 空格 vs ALT：在宝屋/龙国上实测按空格是否触发同一弹窗；若触发，本机版本键位确为空格。
-- 宝屋/龙国具体命中哪条 type 分支。
+- **键位**：Changelog 记 ALT+RMB，`0x10002A10` 读 'A' 键 —— 需实机确认 ALT+RMB 弹的是不是同一个窗；若不是，说明 `0x10002A10` 是另一个功能，必须重新找。
+- **宝屋/龙国的实现位置**：SoD_SP.dll 共注册 107 个钩子（注册函数 `0x10002C20`，`call [ecx+18h]`），目前只排查了其中 11 个（`0x5F3C43/0x5F439B/0x5F6BE2/0x5F4B05/0x5F522A/0x46D12B/0x46D4CB/0x46D9F0/0x5F50F8/0x5D45FD`），尚未逐一定性。下一步应把宝屋/龙国的对象 type 常量（如 `0x19`=DRAGON_UTOPIA、`0x54`=CRYPT 等）拿去比对这 107 个 handler 里的 `cmp/sub` 常量。
+- 也可从 SoD_SP 的 `[options]` 键值侧反查：本机 `SoD_SP.ini` 里没有 ALT/对话框相关开关，说明该功能**没有 ini 开关、默认常开**，改造只能改代码。
