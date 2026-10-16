@@ -439,5 +439,18 @@ H3Space 宝屋右键增强插件上线后"仍弹原版窗"，逐轮诊断（每�
 
 ### 11.4 H3Space 增强窗的对齐口径（本次实现）
 
+照抄上述行序与尺寸：大标题 bigfont 居中 → 守兵（`CPRSMALL.def`，帧=生物ID+2，步长 34）→ 资源（`resource.def` 帧=资源序号 0..6，步长 34）→ 宝物（`artifact.def`，帧=宝物 ID，步长 46）→ 奖励生物（居中）→ 再追加两行「守兵 n/4 / 奖励 n/4」增减按钮行；全部只显示图标 + 数字，且**每个图标带一圈与格子等宽的描边边框**（复刻原版"同一格先画框、再画图标"的两层叠加）。空行不留：仅当实时值或四档模板存在生物奖励时才预留奖励生物行。
+
+### 11.5 画面缝隙定名（2026-10-17）
+
+对照 H3API `H3API.hpp:20979 / 21021` 与 `reversing\Heroes3Src` 符号表，SoD_SP 绘图所用的两个游戏函数定名如下（本次查图标"边框"时确认）：
+
+| 地址 | 名称 | 签名要点 |
+|---|---|---|
+| `0x47BE90` | `H3DefFrame::DrawToPcx16` | `(src_x, src_y, src_w, src_h, pcx16->buffer, dst_x, dst_y, pcx16->width, pcx16->height, pcx16->scanlineSize, palette565, mirror, do_not_use_special_colors)`；`this` = 帧指针 |
+| `0x55C9C0` | `H3LoadedDef::Load` | 内部引用字符串 `GetSprite`（`Heroes3Src\symbols\function_string_refs.csv` 0x55C9C0 → 0x6830D8） |
+
+据此重读 `FUN_1001c050`（守兵头像）/`FUN_1001c220`（资源）/`FUN_1001c4d0`（宝物）：三者都是**同一格上连续多次 `DrawToPcx16` 同尺寸 blit**（守兵 3 次同源、资源 3 次两条 DEF 交替、宝物先框后调用 `FUN_10039110` 设图再画图标），参数中的 `piVar2[8]` 即 DEF 的调色板指针、`*(this+0x70)` 是对话框绘制缓冲（`H3LoadedPcx16*`）。**即"图标带边框"是"先画框 DEF、再画图标"两层叠加**；框 DEF 的名字在反编译里不可见（`Load` 的实参被 Ghidra 丢弃），故 H3Space 侧用等尺寸自绘描边复刻（见 §11.4 与之配套的设计文档）。
+
 照抄上述行序与尺寸：大标题 bigfont 居中 → 守兵（`CPRSMALL.def`，帧=生物ID+2，步长 34）→ 资源（`resource.def` 帧=资源序号 0..6，步长 34）→ 宝物（`artifact.def`，帧=宝物 ID，步长 46）→ 奖励生物（居中）→ **再追加两行「守兵 n/4 / 奖励 n/4」增减按钮行**；全部只显示图标 + 数字。空行不留：仅当实时值或四档模板存在生物奖励时才预留奖励生物行。
 
