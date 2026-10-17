@@ -174,16 +174,63 @@ ABI 判定用**双证据**，两者都成立才认（否则当作未定位，放
 | 0.2.0.92 | 0x1402F4 / 0x14DB2C / **0x14DB50** / 0x14DCEC | 0x0FAE70 | 0x0FADB0 |
 | 0.2.0.34 | 0x11F4C4 / 0x12FCC4 / **0x12FCE8** / 0x12FEE0 | 0x0E449C | 0x0E4330 |
 
-## 7. 卷轴 DEF 判别全局
+## 7. 卷轴 DEF 判别全局（SpScrArt 开关）——两版均已定案
 
-- 0.2.0.92：`0x157FB8`（`.data`）。ctor 与 callback 多处引用（0x155E0 / 0x23E78 /
-  0x39CE8 / 0x3AD53 / 0x3B04E / 0x3B13C / 0x47F08 / 0x47F0E / 0x55CB2）。
-- 0.2.0.34：**本轮未审计到对应全局**。插件里明确降级为 `nullptr` → `scrollDefEnabled=false`，
-  日志写「卷轴图标按普通宝物样式显示」。这不影响面板可用，只是卷轴格子按普通宝物 DEF 画。
+这是「法术卷轴(artifactId=1)在背包里画成对应法术图标，还是通用卷轴图」的总开关，
+由 HD 配置在启动时写入 `.data`，随后被完整背包构造函数消费。
 
-补充：ctor 的卷轴分支其实是用 `def.SpScrArt` 字符串决定的（0.2.0.92 构造函数 @0x039D2B），
-与上面那个 .data 全局不是同一处判据；后续若要精确还原「卷轴图标」，从 `def.SpScrArt`
-的引用点入手更直接。
+| | 0.2.0.92 | 0.2.0.34 |
+|---|---|---|
+| 全局 RVA | **0x157FB8** | **0x1388D0** |
+| 构造函数内消费点 | 0x039CE8（ctor @0x039A00） | 0x03B009（ctor @0x03AD80） |
+| 配置赋值点 | 0x047F0E `mov [0x1157FB8],edx` | 0x04741A `mov [0x11388D0],eax` |
+| 另一背包窗口同款分支 | 0x03AD53 / 0x03B04E / 0x03B13C（函数 0x03AF80） | 0x03C3F6 / 0x03C75E / 0x03C7DF（函数 0x03C690） |
+| 引用点总数 | 9 | 8 |
+
+### 7.1 两版判定链逐条同构（0.2.0.92 侧，0.2.0.34 只差寄存器分配）
+
+```
+0x039CD8  cmp dword [hero + idx*8 + 0x1D4], 0     ; artifactId
+0x039CE0  jl  0x1039DF5                           ; id<0 → 跳过该格
+0x039CE6  cmp dword [0x1157FB8], 0                ; ★ 开关
+0x039CED  je  0x1039D74                           ; 关 → 普通宝物分支
+0x039CFF  cmp dword [hero + idx*8 + 0x1D4], 1     ; artifactId == 1（法术卷轴）
+0x039D07  jne 0x1039D74                           ; 不是卷轴 → 普通分支
+0x039D15  mov eax, [hero + idx*8 + 0x1D8]         ; subtype = 法术 ID
+0x039D1C  mov [ebp-0x54], eax
+0x039D2B  push "def.SpScrArt"                     ; 卷轴专用美术
+```
+
+0.2.0.34 侧只有两处差异：全局换成 `[0x11388D0]`（0x03B007 处），
+subtype 暂存槽是 `[ebp-0x38]`（0x03B03D）。判定顺序、跳转结构完全一致。
+
+### 7.2 运行时实证（2026-10-17，只读 ReadProcessMemory）
+
+游戏跑 5.4（HD_SOD 0.2.0.34，基址 0x03000000）时读进程内存：
+
+```
+HD_SOD+0x1388D0  值 = 1     ← 该整合包确实开启了卷轴 SpScrArt 美术
+HD_SOD+0x157FB8  值 = 0     ← 新版地址在旧版里是无关数据，证明两版布局不同、不能混用
+```
+
+初值方面：`0x1388D0` 落在 `.data` 的未初始化区（该节 VSize 0xFC1288 但 RawSize 仅
+0x2A00，文件里无数据），运行时由配置加载代码写入 —— 所以「文件里查初值」查不到，
+只能看运行时值，这一点与 `0x157FB8` 相同。
+
+### 7.3 消费口径（插件侧）
+
+`makeIconView` 等价的判定：
+
+```
+artifactId < 0                      → 不显示
+artifactId == 1 && 开关非 0          → 显示 def.SpScrArt，帧号 = subtype（法术 ID）
+否则                                → 显示 artifact.def，帧号 = artifactId
+```
+
+插件原先对 0.2.0.34 读不到全局 → 恒 false → 卷轴一律显示 `artifact.def` 第 1 帧
+（通用卷轴图）。2026-10-17 补上 0x1388D0 后两版行为一致，不再有降级。
+影响面回顾：只影响**原生背包那 64 格**的覆盖图标层；随身空间面板自己的格子本来就
+按 artifactId 设帧；悬停提示走 `H3Artifact::GetName()` + 法术名拼接，与 DEF 无关。
 
 ## 8. 插件侧落地（H3Space）
 
@@ -206,7 +253,7 @@ StageB 全部改用 `WarehouseUiAnchors_()` 的 RVA；Panel 用双 ABI 分派背
 
 单元测试 `tests/warehouse_ui_test.cpp` 新增 10 组（合成最小 PE 映像）：
 唯一定位、重复特征拒绝、`int3` 紧跟拒绝、通配绝对地址、空指针、prolog 回溯、
-`ret` 立即数判定、ASCII 串、两个版本档案值 + 交叉校验、卷轴全局降级。
+`ret` 立即数判定、ASCII 串、两个版本档案值 + 交叉校验、卷轴全局取值。
 
 ## 9. 实机验证（2026-10-17，agent 只做启动与日志判读，操作由用户完成）
 
@@ -214,26 +261,30 @@ StageB 全部改用 `WarehouseUiAnchors_()` 的 RVA；Panel 用双 ABI 分派背
 
 ```
 随身空间UI: HD_SOD 身份 file=0.2.0.34 product=5.0.0.4 bytes=1325568 sha256=62BC488A39…
-随身空间UI: HD_SOD 锚点 modalSite=0x0003B170(候选1) modalEnd=0x0003B187 shadow=0x0000…
+随身空间UI: HD_SOD 锚点 modalSite=0x0003B170(候选1) modalEnd=0x0003B187 shadow=0x00006450(候选1) skinFactory=0x000E4330(abi=2 引用2) scroll=0x001388D0 text段=1
 随身空间UI: 门卫通过（已知版本 0.2.0.34，锚点与实测表一致）
+随身空间UI: 指针 ScrollEnabled = HD_SOD.dll+0x1388D0
 随身空间UI: 指针 Shadow = HD_SOD.dll+0x6450
 随身空间UI: modal LoHook 已安装 site=0x0003B170 end=0x0003B187（动态定位，非硬编码）
 随身空间UI: HD整窗背景 abi=stdcall7 canvas=405x523 stride=812 color=5
+随身空间UI: 卷轴DEF开关=1（全局=HD_SOD.dll+0x1388D0 值=1）
 随身空间UI: attached dialog=20A7DC10 hero=9 token=1 side=1
 随身空间UI: 已展开置顶随身空间层 dialog=20A7DC10
 随身空间UI: 已关闭随身空间层，背包恢复原生交互
 随身空间UI: detached token=1
 ```
 
+（补上 0x1388D0 后日志不再出现「卷轴DEF判别全局未定位」warn，卷轴降级已消除。）
+
 **10.09（HD_SOD 0.2.0.92）**：门卫「已知版本 0.2.0.92，锚点与实测表一致」，
 `modal LoHook 已安装 site=0x00039E66 end=0x00039E7D`，无回归。
 
-部署产物 `H3Space.dll` SHA256 `521D01C80CA269B69925D5DBBE674547FDA622BCAEC6E0A895245260D3676474`，
-两个游戏目录一致；构建 0 警告 0 错误；单元测试全绿（含新增 120 断言）。
+部署产物 `H3Space.dll` SHA256 `B359E9D9926A4C7A0AEBBA3FF12098047AA112F8CD601FE14FDDF2EEB750F94B`，
+两个游戏目录一致；构建 0 警告 0 错误；单元测试全绿（含新增 120 断言，卷轴断言已改为 0x1388D0）。
 
 ## 10. 待验证 / 后续
 
-- 0.2.0.34 的「卷轴 DEF 全局」未定位（功能降级，非缺陷）；要补就从 `def.SpScrArt` 引用点查。
+- 0.2.0.34 的「卷轴 DEF 全局」已于 2026-10-17 定案为 `0x1388D0`（见第 7 节），降级已消除。
 - 旧版面板的**像素级外观**（stdcall 背景工厂产出的 405×523 画布）只验证了尺寸/stride/颜色
   与 attach 流程，未与 0.2.0.92 做逐像素对比；若要宣称外观完全一致需另做截图比对。
 - 未来 HD_SOD 版本：先看日志两行（`HD_SOD 锚点` 与 `门卫通过/拒绝`）；适配成功就把新
