@@ -134,15 +134,15 @@ Select-String -Path *.log -Pattern '\[Track\] bind|\[Track\] update|identity los
 ### 7.2 新增机制硬事实
 
 1. **waiting 位只由「等待」置位，防御不置位**：反编译全库仅 `reversing\Heroes3Src\src\h3\uncategorized\blk_470000.c:17268` 一处 `| 0x2000000`，位于 `case 8`（`BA_WAIT=8`）；`case 3`（`BA_DEFEND`）不含该位（它置 bit27 defending）。位在 `creature+0x84 bit25`，`H3CombatCreature::IsWaiting()` 同口径。
-2. **`NoteCastTimingHandoff` 的 `acts>=2` 是死代码**：`turn` = `H3CombatManager::turn`（BattleMgr+0x13D6C，`AutoExecute.inc.cpp:1045-1053`）在行动入口 `FUN_00475800` 首句每 action 无条件 +1（`blk_470000.c:9934`，另见本目录《战场等待标志与每回合等待.md》）。因此每次交权 turn 都变 → `acts` 每次清零；同一 turn 内第一次询问后 `on_self=true` 锁死，`acts` 最多 1。日志 turn=28 连问 3 次全写「首次交权」为铁证。→ `after_wait` 实际**只依赖 bit25**，文档 `docs\变更记录.md:25` 与 `docs\11-H3Auto功能移植.md:354` 的「②本轮已被交权≥2次」不成立，应改写。
+2. **`NoteCastTimingHandoff` 的 `acts>=2` 是死代码（2026-10-17 已按用户裁定删除）**：`turn` = `H3CombatManager::turn`（BattleMgr+0x13D6C，`AutoExecute.inc.cpp:1045-1053`）在行动入口 `FUN_00475800` 首句每 action 无条件 +1（`blk_470000.c:9934`，另见本目录《战场等待标志与每回合等待.md》）。因此每次交权 turn 都变 → `acts` 每次清零；同一 turn 内第一次询问后 `on_self=true` 锁死，`acts` 最多 1。日志 turn=28 连问 3 次全写「首次交权」为铁证。→ `after_wait` 实际**只依赖 bit25**。**处置（2026-10-17 用户裁定）**：既然永远凑不满就不该留——已删除 `CastTimingWaitState`/`ResetCastTimingWaitState`/`NoteCastTimingHandoff` 与 `s_cast_wait_state` 及对应单测，`CastTimingAllowsThisHandoff_` 现在只查 `StackWaitedThisRound_`（`IsWaiting()`）。`docs\变更记录.md` 与 `docs\11-H3Auto功能移植.md:354` 已同步改写（旧条目加了「已删除」注记）。提交 H3BattleStore `796989e`。
 3. **手动模式无旁路**：全仓唯一写 `CM_AUTO` 的位置是 F9（`AutoExecute.inc.cpp:702`）；单次接管 J 在 MANUAL 下被 `734` 整段跳过；面板打开/提交/重打/读档/store 恢复一律强制 MANUAL。热键钩子只认 F9/J/P（`AutoStore.inc.cpp:728-734`），**等待/防御的按键与鼠标点击都不经这条链**，不可能把控制权变成 AUTO。
 4. **消息入口补判有覆盖缺口**：`TryAutoExecuteActiveStack` 只在 `cast_probe_forced`（F9 当帧）或 `decision==CD_EXECUTE_H3AUTO` 时调 `TryProbeCastChannelFromMsg_`（`3306-3323`）；`rule=AA_MANUAL` / `KEEP_ORIGINAL` / 全手动一律不补判（`3324-3325` + `3231-3233`）。
-5. **日志-代码对齐缺口**：`CanCastSpellAtCoord` 失败（`1775-1778`）、候选逐槽过滤（`1660-1668`/`1688-1690`/`1720-1724`）、探针因 `mgr->action != 0` 跳过（`3286`）**三处零日志**；`[Protect] heroCasted blocks` 与 `LogDecline_` 的去重键是 `turn`，而 turn 每 action 变 → 文档说的「按回合去重」实为「每 action 一行」。
+5. **日志-代码对齐缺口**：`CanCastSpellAtCoord` 失败（`1775-1778`）、候选逐槽过滤（`1660-1668`/`1688-1690`/`1720-1724`）、探针因 `mgr->action != 0` 跳过（`3286`）**三处零日志**；`[Protect] heroCasted blocks` 与 `LogDecline_` 的去重键是 `turn`，而 turn 每 action 变 → 文档说的「按回合去重」实为「每 action 一行」。**（2026-10-17 已补齐静默点日志：逐槽跳过原因/选中复核失败/游戏拒施/探针因已有动作跳过，并在 `settings committed` 行与探针行打出生效施法时机快照；`heroCasted blocks` 的去重键问题未改，只是量偏大。）**
 
 ### 7.3 待办（未实施，待用户裁定）
 
-1. 勾「等待后」时**由插件自己代发「等待」**（`SubmitWait_`），使其再次被交权时施法——这样「等待后」才是真自动，而不是「等玩家手动点等待」。
-2. 修 `acts` 判据：改用真实的「本轮该部队已行动过一次」计数（或直接用 bit25 + 本轮已交权次数），别依赖 `turn`。
-3. 拦截后仍要代发配置动作（本场 turn 28-31 期间 `submitted=0`，回合要等玩家点一下才推进）。
-4. 三处静默点补 debug；`[Protect] msg-entry cast probe` 建议补打 timing.mode / after_wait / heroCasted / action，便于一条日志自证。
-5. 面板/HUD 明示当前生效的「每回合施法时机」（含等待后勾选态），避免「以为改回来了其实按了取消」。
+1. ~~勾「等待后」时由插件自己代发「等待」~~ **已否决（2026-10-17 用户裁定）**：「等待后」只影响施法时机，插件不代发等待动作，等待由玩家自己做。
+2. ~~修 `acts` 判据~~ **已完成（2026-10-17）**：不修而是**直接删掉**，只留 bit25 作唯一判据（用户裁定：凑不满的判据不该留）。
+3. ~~拦截后仍要代发配置动作~~ **不做**：与本功能语义无关（手动回合本来就该等玩家操作），本条属误判。
+4. ~~三处静默点补 debug + 探针补上下文~~ **已完成（2026-10-17）**：逐槽跳过原因（unbound/no-stack/baseline/cid/war-machine/no-corpse-hex/magic/threshold，走 5 秒收账闸）、选中复核失败、游戏拒施（每回合一行）、探针因已有动作跳过（每回合一行）；`settings committed` 行与探针行都带生效施法时机快照（timing/wait/target/heroCasted）。
+5. 面板/HUD 明示当前生效的「每回合施法时机」（含等待后勾选态），避免「以为改回来了其实按了取消」——**仍未做**（用户未表态；本次改为在日志里打生效快照，属于替代取证手段）。
