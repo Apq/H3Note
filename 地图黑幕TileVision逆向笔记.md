@@ -60,3 +60,23 @@ struct H3TileVision {            // sizeof = 2
 - 进程内状态与存档块分离：`0x4FDB40` 只清进程内快照；存档里的块保留，故读档后可恢复。
 
 当前实现状态（round 1 已交付）：热键 X（45，可配）+ 进程内全开/恢复 + `0x4FDB40` 失效 + CrashGuard + 日志，构建部署通过（`3DC5D5B4A1C212553DD2A5683FFE2D562BE74097B4D05E79F95EEB30E3FFE61C`）。存档块（本节）为 round 2 施工项。
+## 7. 施工进度与交接（2026-10-17，H3Space 侧）
+
+已完成并验证（部署哈希 `5F44ECA30EC1289E4C641FC6730F672C73EC1AA616AAC076F334442445BC7F92`，Release=部署一致，单测全绿）：
+
+- `modules/MapReveal.inc.cpp`：热键 **X（45，`[MapReveal] HotkeyScan` 可配 / `Enabled=0` 可关）** → 全开↔恢复；全开前整块 TileVision 快照；`0x4FDB40` 地图重建作废快照；`FullUpdate` 重绘；CrashGuard（`MapReveal`/`MapReveal.MapSetup`）+ 决策日志。
+- 键盘派发：`SettingsDialog.inc.cpp` 的 `OnKeyMsg_` 在设置窗 `KeyMsg` 返回 false 后转 `MapRevealOnKeyMsg_`。
+- 模块包含：`H3Space.cpp` 在 `namespace rndnew`（78-104 行）内包含，**模块文件不得自包 rndnew**（否则 `rndnew::rndnew` → C3861/C2039）。
+- `MRVS` 块编解码已就位：magic/版本/地图标识(`mapSize | 地下<<16`)/长度/FNV 校验；`MapRevealBuildBlock_(UINT8** out, …)`（注意不是 `UINT8* const*`，否则 C3892）。
+
+**未完成的关键项**：`MRVS` 块尚未接入存档读写，即"快照进存档、读档后可恢复"未实现。
+
+交接要点（下一步施工顺序）：
+
+1. 读 `WarehouseStore.hpp:42-130`（`Observation` / `SavePlan` / `ValidateObservation` / 两个 `PlanSave` 重载）与 `WarehouseStore.inc.cpp:230-270`、`:373-405`（`OnSaveGame_` / `OnLoadGame_`）；
+2. `PlanSave` 是纯函数（原文件字节 + Observation → SavePlan），文件层读回与原子替换在 `OnSaveGame_`；**不要新增第二个 0x4BEB60 钩子**，避免破坏共享壳（`SharedHookShell.inc.cpp`）的既有顺序；
+3. 追加 `MRVS` 块失败必须保持原文件不动（存档安全优先，`LogError` 记录）；
+4. 载入侧取块 → 校验地图标识一致才允许恢复（防串档）；
+5. 补单测（新增测试 TU 需加入 `tests/run-unit-tests.ps1` 的 `rndSources`）、补设计文档、再次统一构建/部署/哈希验收。
+
+阻塞原因（连续多轮相同）：复用存档写入路径必须先完整掌握上述约 200 行的边界语义，而其失败代价是玩家存档；本会话剩余上下文不足以安全完成，故停手而非硬改。
